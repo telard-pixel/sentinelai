@@ -34,6 +34,11 @@ DEFAULT_PORT = 8765
 
 DATA.mkdir(parents=True, exist_ok=True)
 LOG = DATA / "sentinelai.log"
+try:
+    if LOG.exists() and LOG.stat().st_size > 5_000_000:   # tiene il registro sotto i 5 MB (più la copia precedente)
+        LOG.replace(LOG.with_suffix(".log.1"))
+except OSError:
+    pass
 if sys.stdout is None or sys.stderr is None or FROZEN:
     # Nel programma con finestra non c'è console: tutto va nel registro (sennò uvicorn si blocca).
     _log = open(LOG, "a", encoding="utf-8", buffering=1)
@@ -73,7 +78,8 @@ def port_free(port: int, host="127.0.0.1") -> bool:
 
 def make_app(data_dir: Path, password: str):
     os.environ.update(MONGO_URL=f"sqlite:///{data_dir.as_posix()}", DB_NAME="sentinelai", DATA_DIR=str(data_dir),
-                      APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="*")
+                      APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="*",
+                      SENTINEL_LOG=str(LOG))
     sys.path.insert(0, str(BACKEND))
     import server  # noqa: E402  (legge le variabili qui sopra)
     from fastapi.staticfiles import StaticFiles
@@ -164,6 +170,9 @@ def run_tray(port: int, srv):
     def cartella(icon, item):
         os.startfile(str(DATA))  # noqa: S606 (solo Windows)
 
+    def registro(icon, item):
+        os.startfile(str(LOG))  # si apre col Blocco note
+
     def esci(icon, item):
         srv.should_exit = True
         icon.stop()
@@ -171,6 +180,7 @@ def run_tray(port: int, srv):
     menu = pystray.Menu(
         pystray.MenuItem("Apri SentinelAI", apri, default=True),
         pystray.MenuItem("Avvia con Windows", autostart, checked=lambda item: autostart_enabled()),
+        pystray.MenuItem("Apri registro", registro),
         pystray.MenuItem("Cartella dei dati", cartella),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Esci", esci),
@@ -244,6 +254,9 @@ def prova(out_file: str) -> int:
         check(len(mp4) > 5000 and mp4[4:8] == b"ftyp", f"clip MP4 H.264: {len(mp4)} byte, {dur} s")
         x = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/events/export?format=xlsx", timeout=20).read()
         check(x[:2] == b"PK", "esportazione Excel")
+        lg = get("/api/log?lines=200")
+        check(lg["available"] and "YOLOv8 caricato" in lg["text"], "registro leggibile dall'app")
+        check(get("/api/monitor") == {}, "nessuna telecamera di rete accesa all'avvio")
     except Exception:
         ok = False
         lines.append("ERRORE\n" + traceback.format_exc())

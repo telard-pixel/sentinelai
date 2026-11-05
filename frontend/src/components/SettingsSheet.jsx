@@ -7,6 +7,7 @@ import { CATEGORY, http } from "@/lib/api";
 import StorageSection from "@/components/StorageSection";
 import ThemeSelector from "@/components/ThemeSelector";
 import UsersSection from "@/components/UsersSection";
+import LogSection from "@/components/LogSection";
 import { Switch } from "@/components/ui/switch";
 
 function SliderRow({ testid, label, value, min, max, step, onChange, fmt }) {
@@ -83,6 +84,7 @@ export default function SettingsSheet({ open, onOpenChange, settings, onSave }) 
             })}
           </div>
           <StorageSection days={d.retention_days ?? 30} onDays={(v) => setD({ ...d, retention_days: v })} />
+          <LogSection />
           <Button data-testid="settings-save-button" onClick={() => { onSave(d); onOpenChange(false); }} className="w-full bg-emerald-500 font-mono text-xs uppercase tracking-wider text-[#04130D] hover:bg-emerald-400">Salva impostazioni</Button>
         </div>
       </SheetContent>

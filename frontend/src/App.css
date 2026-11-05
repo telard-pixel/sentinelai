@@ -25,3 +25,5 @@
 .nav-scroll { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .nav-scroll::-webkit-scrollbar { display: none; }
 @media (max-width: 640px) { header.sticky { gap: 0.75rem; } }
+.log-box { max-height: 16rem; overflow: auto; white-space: pre-wrap; word-break: break-all; font-family: "JetBrains Mono", monospace;
+  font-size: 10px; line-height: 1.45; padding: 0.5rem; border-radius: 0.375rem; background: rgb(0 0 0 / 0.35); color: rgb(var(--g300)); }

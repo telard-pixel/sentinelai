@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Play, Square, Maximize2, Minimize2, Settings2, Camera, Radio, Film, Clapperboard, Server } from "lucide-react";
 import { useStream } from "@/hooks/useStream";
+import { http } from "@/lib/api";
 import LiveFeed from "@/components/LiveFeed";
 
 export const SOURCE_META = {
@@ -35,6 +36,18 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
 
   const start = (file) => stream.start({ cameraId: camera.id, source: camera.type, deviceId: camera.device_id, file });
   const onStart = () => (camera.type === "file" ? fileRef.current?.click() : start());
+  // RTSP/NVR: il server le controlla di continuo (anche a finestra chiusa). La finestra si ricollega da sola
+  // se la telecamera è accesa; "Ferma" spegne davvero il monitoraggio sul server.
+  const isNet = ["rtsp", "nvr"].includes(camera.type);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (isNet && camera.monitor && !camera.disabled) start(); }, [camera.id, camera.monitor, camera.type, camera.url]);
+  const onStop = async () => {
+    if (isNet) {
+      try { await http.post(`/cameras/${camera.id}/monitor`, { on: false }); } catch {}
+      onCameraChange({ ...camera, monitor: false }).catch(() => {});
+    }
+    stream.stop();
+  };
 
   return (
     <div className={`panel overflow-hidden ${expanded ? "col-span-full" : ""}`} data-testid={`camera-tile-${camera.id}`}>
@@ -48,7 +61,7 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
           {camera.disabled ? (
             <span data-testid={`camera-disabled-${camera.id}`} className="rounded border border-amber-500/40 px-2 py-1 font-mono text-[10px] uppercase text-amber-400">Disattivata</span>
           ) : live ? (
-            <button data-testid={`camera-stop-${camera.id}`} onClick={stream.stop} className="flex items-center gap-1 rounded bg-red-500/90 px-2.5 py-1 font-mono text-[10px] uppercase text-[#fff] hover:bg-red-500"><Square className="h-3 w-3" /> Ferma</button>
+            <button data-testid={`camera-stop-${camera.id}`} onClick={onStop} className="flex items-center gap-1 rounded bg-red-500/90 px-2.5 py-1 font-mono text-[10px] uppercase text-[#fff] hover:bg-red-500"><Square className="h-3 w-3" /> Ferma</button>
           ) : (
             <button data-testid={`camera-start-${camera.id}`} onClick={onStart} className="flex items-center gap-1 rounded bg-emerald-500 px-2.5 py-1 font-mono text-[10px] uppercase text-[#04130D] hover:bg-emerald-400"><Play className="h-3 w-3" /> Avvia</button>
           )}

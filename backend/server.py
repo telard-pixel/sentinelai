@@ -29,7 +29,8 @@ import telegram_bot
 from auth_local import require_approved, users_router, ws_member
 from detection import COCO_IT, category_of, detector
 from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, stream_url
-from session import StreamSession, network_loop
+from monitor import Manager
+from session import StreamSession
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -74,6 +75,7 @@ async def ensure_indexes() -> None:
 
 
 app = FastAPI(title="SentinelAI Vision Guard")
+manager = Manager(db)
 public = APIRouter(prefix="/api")
 api = APIRouter(prefix="/api", dependencies=[Depends(require_approved)])
 
@@ -123,6 +125,7 @@ async def get_settings():
 @api.put("/settings", response_model=Settings)
 async def put_settings(s: Settings):
     await db.settings.replace_one({"_id": "global"}, s.model_dump(), upsert=True)
+    manager.reload_settings(s)
     return s
 
 
@@ -149,11 +152,19 @@ async def update_camera(camera_id: str, body: CameraIn):
         data["nvr_password"] = old.nvr_password   # campo vuoto = password invariata
     cam = Camera(**data, id=old.id, created_at=old.created_at)
     await db.cameras.replace_one({"id": camera_id}, cam.model_dump())
+    if cam.type in ("rtsp", "nvr") and cam.monitor:
+        if manager.get(cam.id):
+            manager.reload_camera(cam, await load_settings())
+        else:
+            manager.ensure(cam, await load_settings())
+    else:
+        await manager.stop(cam.id)
     return camera_public(cam)
 
 
 @api.delete("/cameras/{camera_id}")
 async def delete_camera(camera_id: str):
+    await manager.stop(camera_id)
     r = await db.cameras.delete_one({"id": camera_id})
     if not r.deleted_count:
         raise HTTPException(404, "Telecamera non trovata")
@@ -528,8 +539,15 @@ async def stream_ws(ws: WebSocket):
         await ws.close(code=4401)
         return
     await ws.accept()
-    session: Optional[StreamSession] = None
-    net_task: Optional[asyncio.Task] = None
+    session: Optional[StreamSession] = None     # webcam / file / demo: i fotogrammi li manda la finestra
+    worker = None                                # RTSP / NVR: li legge il server di continuo (monitor.py)
+    queue = None
+    pump: Optional[asyncio.Task] = None
+
+    async def pump_frames(q):
+        while True:
+            await ws.send_json(await q.get())
+
     try:
         while True:
             msg = await ws.receive()
@@ -553,34 +571,87 @@ async def stream_ws(ws: WebSocket):
                     await ws.send_json({"type": "error", "message": "Telecamera non trovata"})
                     continue
                 if session:
-                    await session.close()
-                session = StreamSession(db, camera, await load_settings(), int(data.get("tz_offset", 0)))
+                    await asyncio.shield(session.close())
+                    session = None
+                if worker and queue:
+                    worker.detach(queue)
+                if pump:
+                    pump.cancel()
                 if camera.type in ("rtsp", "nvr"):
-                    url = stream_url(camera)
-                    if not url:
-                        await ws.send_json({"type": "error", "message": "Telecamera disattivata: manca l'indirizzo dell'NVR."})
-                        continue
-                    net_task = asyncio.create_task(network_loop(ws, session, url))
+                    if not camera.monitor:
+                        await db.cameras.update_one({"id": camera.id}, {"$set": {"monitor": True}})
+                        camera.monitor = True
+                    worker = manager.ensure(camera, await load_settings())
+                    queue = worker.attach()
+                    st = worker.status
+                    await ws.send_json({"type": "ready"} if st["state"] == "live" else {"type": "error", "message": st["message"]})
+                    pump = asyncio.create_task(pump_frames(queue))
                 else:
+                    session = StreamSession(db, camera, await load_settings(), int(data.get("tz_offset", 0)))
                     await ws.send_json({"type": "ready"})
-            elif kind == "reload" and session:
+            elif kind == "reload":
                 with suppress(HTTPException):
-                    session.update(await get_camera(session.camera.id), await load_settings())
-            elif kind == "reset" and session:
-                session.counts = {"in": 0, "out": 0}
+                    if session:
+                        session.update(await get_camera(session.camera.id), await load_settings())
+                    elif worker:
+                        manager.reload_camera(await get_camera(worker.camera.id), await load_settings())
+            elif kind == "reset":
+                if session:
+                    session.counts = {"in": 0, "out": 0}
+                elif worker:
+                    worker.session.counts = {"in": 0, "out": 0}
     except WebSocketDisconnect:
         pass
     except Exception as exc:
         logger.exception("stream error: %s", exc)
     finally:
-        if net_task:
-            net_task.cancel()
-            with suppress(asyncio.CancelledError, Exception):
-                await net_task
+        # Chiudere la finestra NON ferma le telecamere di rete: smette solo di guardarle.
+        if worker and queue:
+            worker.detach(queue)
+        if pump:
+            pump.cancel()
         if session:
             # shield: anche se la connessione si chiude di colpo, la clip in corso viene salvata.
             with suppress(asyncio.CancelledError):
                 await asyncio.shield(session.close())
+
+
+class MonitorIn(BaseModel):
+    on: bool
+
+
+@api.post("/cameras/{camera_id}/monitor")
+async def camera_monitor(camera_id: str, body: MonitorIn):
+    cam = await get_camera(camera_id)
+    if cam.type not in ("rtsp", "nvr"):
+        raise HTTPException(400, "Solo le telecamere RTSP/NVR restano sotto controllo da sole")
+    await db.cameras.update_one({"id": camera_id}, {"$set": {"monitor": body.on}})
+    if body.on:
+        cam.monitor = True
+        manager.ensure(cam, await load_settings())
+    else:
+        await manager.stop(camera_id)
+    return {"monitor": body.on}
+
+
+@api.get("/monitor")
+async def monitor_status():
+    return {cid: {**w.status, "viewers": len(w.viewers), "fps": (w.last or {}).get("fps", 0)} for cid, w in manager.workers.items()}
+
+
+@api.get("/log")
+async def read_log(lines: int = Query(300, ge=10, le=5000)):
+    path = os.environ.get("SENTINEL_LOG", "")
+    if not path or not os.path.exists(path):
+        return {"available": False, "text": "Registro non disponibile in questa versione (con Docker: docker compose logs backend)."}
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - 400_000))
+        tail = f.read().decode("utf-8", "replace").splitlines()[-lines:]
+    text = "\n".join(tail)
+    text = re.sub(r"(://[^:/@\s]+:)[^@\s]*@", r"\1****@", text)                 # password negli indirizzi
+    text = re.sub(r"bot\d{5,}:[A-Za-z0-9_-]{20,}", "bot****", text)              # token Telegram
+    return {"available": True, "text": text}
 
 
 app.include_router(public)
@@ -601,11 +672,18 @@ async def startup():
         await db.cameras.insert_one(Camera(**DEMO_CAMERA).model_dump())
     app.state.cleanup_task = asyncio.create_task(cleanup_loop())
     await asyncio.to_thread(detector.load)
-    logger.info("YOLOv8 caricato")
+    logger.info("YOLOv8 caricato (%s)", detector.kind)
+    # Le telecamere di rete accese restano accese anche dopo un riavvio del programma.
+    settings = await load_settings()
+    for d in await db.cameras.find({"monitor": True}, {"_id": 0}).to_list(200):
+        cam = Camera(**d)
+        if cam.type in ("rtsp", "nvr"):
+            manager.ensure(cam, settings)
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
+    await manager.shutdown()
     for t in (app.state.index_task, app.state.cleanup_task):
         t.cancel()
         with suppress(asyncio.CancelledError):

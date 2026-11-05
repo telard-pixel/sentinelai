@@ -48,6 +48,8 @@ class CameraIn(BaseModel):
     nvr_stream: Literal["main", "sub"] = "sub"
     nvr_path: str = ""
     device_id: str = ""
+    #: RTSP/NVR: il server la tiene sotto controllo di continuo, anche a finestra chiusa (si spegne con "Ferma").
+    monitor: bool = False
     line: Line = Line()
     zones: List[Zone] = []
 
