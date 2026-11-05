@@ -44,8 +44,10 @@ jobs:
         shell: pwsh
         run: |
           python -m venv C:\esporta
-          C:\esporta\Scripts\python -m pip install -q torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-          C:\esporta\Scripts\python -m pip install -q ultralytics==8.3.55 onnx==1.17.0
+          # torch e torchvision insieme e fissati: altrimenti pip prende un torch nuovo il cui esportatore vuole onnxscript.
+          C:\esporta\Scripts\python -m pip install -q torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
+          C:\esporta\Scripts\python -m pip install -q ultralytics==8.3.55 onnx==1.17.0 torch==2.5.1 torchvision==0.20.1 --extra-index-url https://download.pytorch.org/whl/cpu
+          C:\esporta\Scripts\python -c "import torch; print('torch', torch.__version__)"
           C:\esporta\Scripts\python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=False, dynamic=False)"
           New-Item -ItemType Directory -Force models | Out-Null
           Move-Item yolov8n.onnx models\yolov8n.onnx -Force
