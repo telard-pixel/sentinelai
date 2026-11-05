@@ -6,6 +6,8 @@ python-dotenv==1.0.1
 httpx==0.28.1
 numpy==1.26.4
 openpyxl==3.1.5
+# pymongo solo per IndexModel e ASCENDING/DESCENDING usati da server.py (il database resta SQLite).
+pymongo==4.9.2
 opencv-python-headless==4.10.0.84
 websockets==14.1
 pystray==0.19.5

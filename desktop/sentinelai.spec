@@ -11,7 +11,7 @@ a = Analysis(
     datas=[("../frontend/build", "static"), ("../models/yolov8n.onnx", "models"),
            ("../frontend/public/icon-192.png", "."), ("VERSIONE", ".")],
     hiddenimports=hidden,
-    excludes=["torch", "torchvision", "ultralytics", "motor", "pymongo", "pandas", "matplotlib", "tkinter",
+    excludes=["torch", "torchvision", "ultralytics", "motor", "pandas", "matplotlib", "tkinter",
               "imageio_ffmpeg", "IPython", "scipy"],
     noarchive=False,
 )
