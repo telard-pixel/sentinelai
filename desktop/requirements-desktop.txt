@@ -1,0 +1,13 @@
+# Versione Windows: niente PyTorch/Ultralytics (YOLOv8n gira in ONNX con OpenCV), niente MongoDB (SQLite), niente ffmpeg (H.264 di Windows).
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+python-dotenv==1.0.1
+httpx==0.28.1
+numpy==1.26.4
+openpyxl==3.1.5
+opencv-python-headless==4.10.0.84
+websockets==14.1
+pystray==0.19.5
+pillow==11.0.0
+pyinstaller==6.11.1

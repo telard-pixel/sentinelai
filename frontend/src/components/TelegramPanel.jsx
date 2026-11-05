@@ -35,6 +35,20 @@ export default function TelegramPanel({ draft, setDraft }) {
     }
   };
 
+  const [token, setToken] = useState("");
+  const saveToken = async () => {
+    setBusy(true);
+    try {
+      const r = await http.put("/telegram/token", { token }).then((x) => x.data);
+      setToken("");
+      await refetch();
+      toast.success("Bot collegato", { description: `@${r.bot_username}` });
+    } catch (e) {
+      toast.error("Token non valido", { description: errMsg(e) });
+    }
+    setBusy(false);
+  };
+
   const ok = st?.token_configured && !st?.error;
   return (
     <div className="panel space-y-4 p-4" data-testid="telegram-panel">
@@ -50,6 +64,13 @@ export default function TelegramPanel({ draft, setDraft }) {
           {!st ? "Verifica in corso…" : !st.token_configured ? "Bot non configurato: manca il token del bot" : st.error ? `Token non valido: ${st.error}` : <>Bot <b className="font-mono">@{st.bot_username}</b> pronto</>}
         </span>
       </div>
+      {st && !ok && (
+        <div className="flex items-center gap-2" data-testid="telegram-token-form">
+          <input data-testid="telegram-token-input" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)}
+            placeholder="Token del bot (da @BotFather)" className="h-8 flex-1 rounded-md border border-white/10 bg-black/30 px-3 font-mono text-xs text-gray-100" />
+          <Button data-testid="telegram-token-save" size="sm" disabled={busy || !token.trim()} onClick={saveToken} className="h-8 bg-emerald-500 text-xs text-[#04130D] hover:bg-emerald-400">Salva token</Button>
+        </div>
+      )}
       {ok && (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-sm text-gray-300">

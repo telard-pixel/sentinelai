@@ -54,3 +54,23 @@ e aprire `https://<nome-del-server>.<tailnet>.ts.net`: compare il pulsante **Ins
 - Il riconoscimento gira sul processore (CPU). Con molte telecamere insieme conviene il flusso secondario.
 - Prova automatica fatta il 05/11/2026: 48/48 controlli del backend (login, telecamere, linea, zone, sosta, clip MP4,
   mappa di calore, statistiche, esportazioni, Telegram) e prova nel browser (login, streaming, schede, telefono, PWA).
+
+## Versione Windows (programma da installare)
+
+`SentinelAI-Setup-<versione>.exe`: si installa per l'utente (niente permessi di amministratore), crea l'icona nel menu Start
+(e se vuoi sul desktop) e può partire insieme a Windows. Si apre in una finestra sua (Edge in modalità app) e resta
+nell'area di notifica vicino all'orologio: *Apri SentinelAI*, *Avvia con Windows*, *Cartella dei dati*, *Esci*.
+
+Differenze rispetto alla versione Docker, solo per essere un programma leggero:
+- database in un file SQLite (`backend/docstore.py`, stessa interfaccia di MongoDB) invece del server MongoDB;
+- YOLOv8n in formato ONNX con OpenCV invece di PyTorch (installer da ~100 MB invece di oltre 1 GB);
+- clip H.264 con il codificatore di Windows invece di ffmpeg;
+- nessun login (si usa sul proprio PC). Per metterlo: `%LOCALAPPDATA%\SentinelAI\config.json` → `"password": "..."`.
+  Con `"rete": true` l'app risponde anche agli altri dispositivi della rete (porta 8765).
+
+Dati in `%LOCALAPPDATA%\SentinelAI` (database, clip, registro `sentinelai.log`). Il token Telegram si mette dall'app
+(Allarmi → Allarmi su Telegram).
+
+Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esporta YOLOv8n in ONNX, crea l'exe con
+PyInstaller e l'installer con Inno Setup, **prova l'exe e l'installer** (`SentinelAI.exe --prova`) e con un tag `vX.Y.Z`
+pubblica la Release.

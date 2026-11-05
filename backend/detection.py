@@ -1,4 +1,5 @@
 import math
+import os
 import threading
 import time
 from collections import deque
@@ -48,20 +49,74 @@ def heading_of(dx: float, dy: float, min_mag: float = 0.012):
     return name, arrow, round(ang, 1)
 
 
+ONNX_PATH = Path(os.environ.get("SENTINEL_MODEL_DIR", MODEL_PATH.parent)) / "yolov8n.onnx"
+IMGSZ = 640
+
+
 class Detector:
+    """YOLOv8n. Con models/yolov8n.onnx gira con OpenCV DNN (versione Windows: niente PyTorch);
+    altrimenti con Ultralytics come nel progetto originale (versione Docker)."""
+
     def __init__(self):
         self.model = None
+        self.kind = None
         self.lock = threading.Lock()
 
     def load(self):
+        if ONNX_PATH.exists():
+            net = cv2.dnn.readNetFromONNX(str(ONNX_PATH))
+            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            self.model, self.kind = net, "onnx"
+            self._detect_onnx(np.zeros((360, 640, 3), dtype=np.uint8), 0.5, 0.5, None)
+            return
         from ultralytics import YOLO
         MODEL_PATH.parent.mkdir(exist_ok=True)
         self.model = YOLO(str(MODEL_PATH) if MODEL_PATH.exists() else "yolov8n.pt")
+        self.kind = "ultralytics"
         if not MODEL_PATH.exists() and Path("yolov8n.pt").exists():
             Path("yolov8n.pt").rename(MODEL_PATH)
         self.model.predict(np.zeros((320, 320, 3), dtype=np.uint8), verbose=False)
 
+    def _detect_onnx(self, frame, conf, iou, classes):
+        h, w = frame.shape[:2]
+        r = min(IMGSZ / w, IMGSZ / h)
+        nw, nh = int(round(w * r)), int(round(h * r))
+        px, py = (IMGSZ - nw) // 2, (IMGSZ - nh) // 2
+        canvas = np.full((IMGSZ, IMGSZ, 3), 114, dtype=np.uint8)
+        canvas[py:py + nh, px:px + nw] = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        blob = cv2.dnn.blobFromImage(canvas, 1 / 255.0, (IMGSZ, IMGSZ), swapRB=True, crop=False)
+        with self.lock:
+            self.model.setInput(blob)
+            pred = self.model.forward()
+        pred = np.squeeze(pred, 0).T                    # (8400, 84): cx, cy, w, h, 80 punteggi
+        scores = pred[:, 4:]
+        cls = scores.argmax(1)
+        best = scores[np.arange(len(cls)), cls]
+        keep = best >= conf
+        if classes:
+            keep &= np.isin(cls, np.array(classes))
+        if not keep.any():
+            return []
+        p, cls, best = pred[keep], cls[keep], best[keep]
+        x1 = (p[:, 0] - p[:, 2] / 2 - px) / r
+        y1 = (p[:, 1] - p[:, 3] / 2 - py) / r
+        bw, bh = p[:, 2] / r, p[:, 3] / r
+        boxes = np.stack([x1, y1, bw, bh], 1)
+        # NMS per classe, come fa Ultralytics (agnostic=False).
+        idx = cv2.dnn.NMSBoxesBatched(boxes.tolist(), best.tolist(), cls.tolist(), conf, iou)
+        out = []
+        for i in np.array(idx).flatten():
+            bx, by, bw_, bh_ = boxes[i]
+            a, b = max(0.0, bx / w), max(0.0, by / h)
+            c, d = min(1.0, (bx + bw_) / w), min(1.0, (by + bh_) / h)
+            if c > a and d > b:
+                out.append((int(cls[i]), float(best[i]), (a, b, c, d)))
+        return out
+
     def detect(self, frame, conf, iou, classes):
+        if self.kind == "onnx":
+            return self._detect_onnx(frame, conf, iou, classes)
         h, w = frame.shape[:2]
         with self.lock:
             res = self.model.predict(frame, conf=conf, iou=iou, classes=classes or None, imgsz=640, verbose=False)[0]

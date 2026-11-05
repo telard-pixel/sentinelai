@@ -7,7 +7,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 
 import cv2
-import imageio_ffmpeg
+import numpy as np
 
 import telegram_bot
 from detection import encode_jpeg
@@ -31,6 +31,27 @@ def annotate_frame(frame, tracks, caption):
     return encode_jpeg(img, 640, 70)
 
 
+def _encode_opencv(frames, fps, path):
+    """Versione Windows: H.264 col codificatore di sistema (Media Foundation), niente ffmpeg da allegare."""
+    first = cv2.imdecode(np.frombuffer(frames[0][1], np.uint8), cv2.IMREAD_COLOR)
+    h, w = first.shape[:2]
+    w, h = w - w % 2, h - h % 2
+    api = cv2.CAP_MSMF if os.name == "nt" else cv2.CAP_ANY
+    for code in ("avc1", "H264"):
+        vw = cv2.VideoWriter(path, api, cv2.VideoWriter_fourcc(*code), fps, (w, h))
+        if vw.isOpened():
+            break
+    else:
+        raise RuntimeError("nessun codificatore H.264 disponibile")
+    try:
+        for _, jpg in frames:
+            img = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
+            if img is not None:
+                vw.write(cv2.resize(img, (w, h)) if img.shape[1] != w or img.shape[0] != h else img)
+    finally:
+        vw.release()
+
+
 def encode_mp4(frames):
     if len(frames) < 2:
         return b"", 0.0
@@ -40,6 +61,12 @@ def encode_mp4(frames):
     fd, path = tempfile.mkstemp(suffix=".mp4")
     os.close(fd)
     try:
+        try:
+            import imageio_ffmpeg
+        except ImportError:
+            _encode_opencv(frames, fps, path)
+            with open(path, "rb") as f:
+                return f.read(), round(duration, 1)
         cmd = [imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", f"{fps:.3f}",
                "-i", "-", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv,format=yuv420p", "-color_range", "tv",

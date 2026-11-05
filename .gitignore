@@ -1,5 +1,11 @@
 dati/
 backend/.env
-frontend/node_modules/
-frontend/build/
+frontend/node_modules
+frontend/build
 __pycache__/
+models/
+dist/
+build-exe/
+desktop/sentinel.ico
+desktop/version.txt
+desktop/VERSIONE

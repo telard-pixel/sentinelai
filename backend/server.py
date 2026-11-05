@@ -14,13 +14,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Literal, Optional
 
+import csv
+
 import cv2
 import numpy as np
-import pandas as pd
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
-from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
@@ -33,7 +34,12 @@ from session import StreamSession, network_loop
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-client = AsyncIOMotorClient(os.environ['MONGO_URL'])
+if os.environ['MONGO_URL'].startswith("sqlite:"):
+    # Versione Windows: database in un file SQLite, niente server MongoDB.
+    from docstore import Client as _DBClient
+else:
+    from motor.motor_asyncio import AsyncIOMotorClient as _DBClient
+client = _DBClient(os.environ['MONGO_URL'])
 db = client[os.environ['DB_NAME']]
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -234,15 +240,25 @@ async def export_events(format: Literal["csv", "xlsx"] = "csv", category: Option
                      "ID evento": d["id"]})
     cols = ["Data", "Ora", "Telecamera", "Tipo", "Zona", "Categoria", "Oggetto", "Direzione varco", "Direzione movimento",
             "Angolo (°)", "Confidenza (%)", "ID traccia", "Sorgente", "Allarme", "Clip", "ID evento"]
-    df = pd.DataFrame(rows, columns=cols)
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
     if format == "xlsx":
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Eventi"
+        ws.append(cols)
+        for r in rows:
+            ws.append([r[c] for c in cols])
+        ws.freeze_panes = "A2"
         buf = io.BytesIO()
-        df.to_excel(buf, index=False, sheet_name="Eventi")
+        wb.save(buf)
         return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         headers={"Content-Disposition": f'attachment; filename="eventi_{stamp}.xlsx"'})
-    csv = df.to_csv(index=False, sep=";").encode("utf-8-sig")
-    return Response(csv, media_type="text/csv; charset=utf-8",
+    out = io.StringIO()
+    w = csv.DictWriter(out, fieldnames=cols, delimiter=";")
+    w.writeheader()
+    w.writerows({c: ("" if r[c] is None else r[c]) for c in cols} for r in rows)
+    return Response(out.getvalue().encode("utf-8-sig"), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="eventi_{stamp}.csv"'})
 
 
@@ -438,6 +454,38 @@ async def telegram_status():
     return data
 
 
+TOKEN_FILE = Path(os.environ.get("DATA_DIR", ROOT_DIR)) / "telegram_token"
+
+
+def load_telegram_token():
+    if not os.environ.get("TELEGRAM_BOT_TOKEN") and TOKEN_FILE.exists():
+        os.environ["TELEGRAM_BOT_TOKEN"] = TOKEN_FILE.read_text().strip()
+
+
+class TokenIn(BaseModel):
+    token: str
+
+
+@api.put("/telegram/token")
+async def telegram_set_token(body: TokenIn):
+    """Token del bot messo dall'app (versione Windows): si prova con getMe e si salva solo se è valido."""
+    token = body.token.strip()
+    if not re.fullmatch(r"\d{5,}:[A-Za-z0-9_-]{30,}", token):
+        raise HTTPException(400, "Il token non ha il formato giusto (numero:lettere, come lo dà @BotFather)")
+    old = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    os.environ["TELEGRAM_BOT_TOKEN"] = token
+    try:
+        me = await telegram_bot.call("getMe", timeout=15)
+    except Exception as exc:
+        os.environ["TELEGRAM_BOT_TOKEN"] = old
+        raise HTTPException(400, f"Telegram rifiuta il token: {exc}")
+    TOKEN_FILE.write_text(token)
+    with suppress(OSError):
+        TOKEN_FILE.chmod(0o600)
+    _tg_status.update(at=0.0, data=None)
+    return {"bot_username": me.get("username")}
+
+
 @api.post("/telegram/detect-chat")
 async def telegram_detect_chat():
     try:
@@ -547,6 +595,7 @@ DEMO_CAMERA = {"name": "Demo strada", "type": "demo"}
 
 @app.on_event("startup")
 async def startup():
+    load_telegram_token()
     app.state.index_task = asyncio.create_task(ensure_indexes())
     if not await db.cameras.count_documents({}):
         await db.cameras.insert_one(Camera(**DEMO_CAMERA).model_dump())
