@@ -63,8 +63,8 @@ nell'area di notifica vicino all'orologio: *Apri SentinelAI*, *Avvia con Windows
 
 Differenze rispetto alla versione Docker, solo per essere un programma leggero:
 - database in un file SQLite (`backend/docstore.py`, stessa interfaccia di MongoDB) invece del server MongoDB;
-- YOLOv8n in formato ONNX con OpenCV invece di PyTorch (installer da ~100 MB invece di oltre 1 GB);
-- clip H.264 con il codificatore di Windows invece di ffmpeg;
+- YOLOv8n in formato ONNX con OpenCV invece di PyTorch (installer molto più leggero: niente PyTorch da oltre 1 GB);
+- clip H.264 con ffmpeg incluso nel programma (se mancasse, il codificatore di Windows);
 - nessun login (si usa sul proprio PC). Per metterlo: `%LOCALAPPDATA%\SentinelAI\config.json` → `"password": "..."`.
   Con `"rete": true` l'app risponde anche agli altri dispositivi della rete (porta 8765).
 

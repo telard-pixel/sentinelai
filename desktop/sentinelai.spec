@@ -1,18 +1,19 @@
 # PyInstaller: SentinelAI.exe (cartella), con server, app compilata e modello YOLOv8n ONNX.
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hidden = (collect_submodules("uvicorn") + collect_submodules("websockets")
           + ["server", "session", "clips", "detection", "models", "telegram_bot", "auth_local", "docstore",
-             "pystray._win32", "openpyxl"])
+             "pystray._win32", "openpyxl", "imageio_ffmpeg"])
 
 a = Analysis(
     ["sentinel_desktop.py"],
     pathex=["../backend"],
     datas=[("../frontend/build", "static"), ("../models/yolov8n.onnx", "models"),
-           ("../frontend/public/icon-192.png", "."), ("VERSIONE", ".")],
+           ("../frontend/public/icon-192.png", "."), ("VERSIONE", ".")]
+          + collect_data_files("imageio_ffmpeg", includes=["binaries/*"]),,
     hiddenimports=hidden,
     excludes=["torch", "torchvision", "ultralytics", "motor", "pandas", "matplotlib", "tkinter",
-              "imageio_ffmpeg", "IPython", "scipy"],
+              "IPython", "scipy"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
