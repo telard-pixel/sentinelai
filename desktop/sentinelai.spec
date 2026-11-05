@@ -10,7 +10,7 @@ a = Analysis(
     pathex=["../backend"],
     datas=[("../frontend/build", "static"), ("../models/yolov8n.onnx", "models"),
            ("../frontend/public/icon-192.png", "."), ("VERSIONE", ".")]
-          + collect_data_files("imageio_ffmpeg", includes=["binaries/*"]),,
+          + collect_data_files("imageio_ffmpeg", includes=["binaries/*"]),
     hiddenimports=hidden,
     excludes=["torch", "torchvision", "ultralytics", "motor", "pandas", "matplotlib", "tkinter",
               "IPython", "scipy"],
