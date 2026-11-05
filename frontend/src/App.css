@@ -1,0 +1,27 @@
+.panel {
+  background: rgb(var(--panel));
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  box-shadow: var(--panel-shadow);
+}
+
+.scanlines {
+  background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 3px);
+}
+
+.hud-grid {
+  background-image: linear-gradient(rgba(16, 185, 129, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 185, 129, 0.08) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+@keyframes event-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.event-in { animation: event-in 0.35s ease-out; }
+
+/* 05/11/2026: sul telefono le schede in alto scorrono invece di uscire dallo schermo. */
+.nav-scroll { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.nav-scroll::-webkit-scrollbar { display: none; }
+@media (max-width: 640px) { header.sticky { gap: 0.75rem; } }
