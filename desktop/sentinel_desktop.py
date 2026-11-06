@@ -504,6 +504,41 @@ def run_tray(port: int, srv, show=None, on_exit=None, background=False):
 
 # ------------------------------------------------------------------ prova automatica (CI)
 
+def _ffmpeg_3s(kwargs):
+    import imageio_ffmpeg
+    return subprocess.Popen([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                             "-i", "nullsrc=s=64x64:d=3", "-f", "null", "-"],
+                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **kwargs)
+
+
+def console_windows_during(start) -> int:
+    """Quante finestre del prompt (classico o Terminale di Windows 11) nuove e visibili compaiono mentre gira."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    kinds = ("ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PseudoConsoleWindow")
+
+    def visible():
+        found = set()
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def each(hwnd, _):
+            cls = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, cls, 64)
+            if cls.value in kinds and user32.IsWindowVisible(hwnd):
+                found.add(hwnd)
+            return True
+        user32.EnumWindows(each, 0)
+        return found
+
+    base = visible()
+    proc = start()
+    new = set()
+    while proc.poll() is None:
+        new |= visible() - base
+        time.sleep(0.02)
+    return len(new)
+
 def prova(out_file: str) -> int:
     import tempfile
     lines, ok = [], True
@@ -565,6 +600,14 @@ def prova(out_file: str) -> int:
         jpgs = [(i / 10, cv2.imencode(".jpg", cv2.resize(f, (640, 360)))[1].tobytes()) for i, f in enumerate(frames[:30])]
         mp4, dur = clips.encode_mp4(jpgs)
         check(len(mp4) > 5000 and mp4[4:8] == b"ftyp", f"clip MP4 H.264: {len(mp4)} byte, {dur} s")
+        if os.name == "nt":
+            # 1.0.6: a ogni clip si apriva e chiudeva una finestra del prompt (ffmpeg). Controllo che si verifica da
+            # solo: senza la correzione la finestra DEVE comparire (sennò il controllo non vede niente), con la
+            # correzione no.
+            seen_plain = console_windows_during(lambda: _ffmpeg_3s({}))
+            seen_fixed = console_windows_during(lambda: _ffmpeg_3s(clips._no_window()))
+            lines.append(f"INFO finestre del prompt: senza correzione {seen_plain}, con correzione {seen_fixed}")
+            check(seen_fixed == 0, "clip senza finestra del prompt" + ("" if seen_plain else " (controllo non verificabile qui)"))
         x = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/events/export?format=xlsx", timeout=20).read()
         check(x[:2] == b"PK", "esportazione Excel")
         from zoneinfo import ZoneInfo

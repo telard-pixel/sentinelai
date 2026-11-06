@@ -141,6 +141,16 @@ def same_place(a, b) -> bool:
             return False
 
 
+def _no_window() -> dict:
+    """Su Windows ffmpeg partiva con una finestra nera del prompt che si apriva e chiudeva a ogni clip (1.0.6)."""
+    if os.name != "nt":
+        return {}
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0                                   # SW_HIDE
+    return {"creationflags": 0x08000000, "startupinfo": si}   # CREATE_NO_WINDOW
+
+
 def encode_mp4(frames):
     if len(frames) < 2:
         return b"", 0.0
@@ -160,7 +170,8 @@ def encode_mp4(frames):
                "-i", "-", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2:out_range=tv,format=yuv420p", "-color_range", "tv",
                "-movflags", "+faststart", path]
-        subprocess.run(cmd, input=b"".join(j for _, j in frames), check=True, capture_output=True, timeout=120)
+        subprocess.run(cmd, input=b"".join(j for _, j in frames), check=True, capture_output=True, timeout=120,
+                       **_no_window())
         with open(path, "rb") as f:
             return f.read(), round(duration, 1)
     finally:
