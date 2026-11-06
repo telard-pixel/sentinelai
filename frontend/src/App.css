@@ -55,9 +55,3 @@
 @keyframes splash-blink { 0%, 92%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.1); } }
 @media (prefers-reduced-motion: reduce) { .splash *, .splash { animation: none !important; transition: none !important; } }
 
-/* Pulsante Google */
-.google-btn { display: flex; width: 100%; align-items: center; justify-content: center; gap: .6rem; height: 2.5rem; border-radius: .375rem;
-  background: #fff; color: #1f1f1f; font: 500 .875rem "IBM Plex Sans", system-ui, sans-serif; border: 1px solid #dadce0; }
-.google-btn:hover { background: #f8f9fa; }
-.login-sep { display: flex; align-items: center; gap: .75rem; color: rgb(var(--g500)); font: .7rem "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .1em; }
-.login-sep::before, .login-sep::after { content: ""; flex: 1; height: 1px; background: rgb(var(--c-white) / .1); }

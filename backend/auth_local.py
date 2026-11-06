@@ -12,10 +12,7 @@ import secrets
 import time
 from pathlib import Path
 
-from urllib.parse import quote, urlencode
-
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 COOKIE = "sentinel_token"
@@ -26,19 +23,49 @@ users_router = APIRouter(prefix="/api")
 _fails: dict[str, list[float]] = {}
 
 
-def _google() -> tuple:
-    """(client_id, client_secret, indirizzi ammessi) del login con Google; vuoto = spento."""
-    cid = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
-    emails = {e.strip().lower() for e in os.environ.get("GOOGLE_EMAILS", "").split(",") if e.strip()}
-    return (cid, os.environ.get("GOOGLE_CLIENT_SECRET", "").strip(), emails) if cid else ("", "", set())
+# 06/11/2026: la password si può mettere, cambiare o togliere dall'app (Impostazioni). Si salva come impronta
+# scrypt in DATA_DIR/.app_password; se quel file non c'è vale APP_PASSWORD (Docker, .env). Il login con Google
+# è stato tolto su richiesta di Roberto.
+SCRYPT = {"n": 2 ** 14, "r": 8, "p": 1, "dklen": 32}
 
 
-def login_required() -> bool:
-    return bool(_password() or _google()[0])
+def _hash_file() -> Path:
+    return _data_file(".app_password")
+
+
+def _stored_hash() -> str:
+    p = _hash_file()
+    try:
+        return p.read_text().strip() if p.exists() else ""
+    except OSError:
+        return ""
+
+
+def _hash(pw: str, salt: bytes = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    d = hashlib.scrypt(pw.encode(), salt=salt, **SCRYPT)
+    return f"scrypt${salt.hex()}${d.hex()}"
+
+
+def check_password(pw: str) -> bool:
+    stored = _stored_hash()
+    if stored:
+        try:
+            _, salt, digest = stored.split("$")
+            return hmac.compare_digest(_hash(pw, bytes.fromhex(salt)).split("$")[2], digest)
+        except ValueError:
+            return False
+    env = os.environ.get("APP_PASSWORD", "")
+    return bool(env) and hmac.compare_digest(pw.encode(), env.encode())
 
 
 def _password() -> str:
-    return os.environ.get("APP_PASSWORD", "")
+    """Qualcosa che cambia quando cambia la password (entra nella chiave dei gettoni); vuoto = nessuna password."""
+    return _stored_hash() or os.environ.get("APP_PASSWORD", "")
+
+
+def login_required() -> bool:
+    return bool(_password())
 
 
 def _data_file(name: str) -> Path:
@@ -109,7 +136,8 @@ class LoginIn(BaseModel):
 
 @users_router.get("/auth/config")
 async def auth_config():
-    return {"password_required": login_required(), "password": bool(_password()), "google": bool(_google()[0])}
+    return {"password_required": login_required(), "password": login_required(),
+            "password_from_env": bool(os.environ.get("APP_PASSWORD")) and not _stored_hash()}
 
 
 @users_router.post("/auth/login")
@@ -125,7 +153,7 @@ async def login(body: LoginIn, request: Request, response: Response):
     recent = [t for t in _fails.get(ip, []) if now - t < 900]
     if len(recent) >= 8:
         raise HTTPException(429, "Troppi tentativi: riprova tra qualche minuto")
-    good = bool(_password()) and hmac.compare_digest(body.password.encode(), _password().encode())
+    good = check_password(body.password)
     if not good:
         _fails[ip] = recent + [now]
         # Limite complessivo (niente tentativi infiniti cambiando indirizzo): vale solo per chi SBAGLIA,
@@ -164,85 +192,42 @@ async def set_role(user_id: str, member: dict = Depends(require_approved)):
     raise HTTPException(403, "Con l'accesso locale c'è un solo utente")
 
 
-# ---------------------------------------------------------------- login con Google (06/11/2026)
-# OAuth 2.0 con PKCE e "state", come raccomanda Google per le app installate: la password Google la vede solo
-# Google; a noi arriva un codice che scambiamo per sapere l'email (verificata). Entra solo chi è in GOOGLE_EMAILS.
-GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
-GOOGLE_USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
-_pending: dict[str, dict] = {}
+
+class PasswordIn(BaseModel):
+    current: str = ""
+    new: str = ""
 
 
-def _callback_url(request: Request) -> str:
-    # Il nome viene da Host (già controllato dal middleware); la porta, senza un proxy davanti, è quella su cui
-    # ascolta davvero il server: chi chiama non può farla puntare a un'altra porta del PC (2° giro dell'agente).
-    from server import real_scheme
-    scheme = real_scheme(request.headers, request.url.scheme)
-    host = request.headers.get("host", "")
-    if os.environ.get("TRUST_PROXY") != "1":
-        name = host.rsplit(":", 1)[0] if not host.endswith("]") else host
-        port = (request.scope.get("server") or ("", 0))[1]
-        host = f"{name}:{port}" if port else name
-    return f"{scheme}://{host}/api/auth/google/callback"
-
-
-def _back(error: str = "", token: str = "") -> RedirectResponse:
-    # Solo codici fissi dopo il #: la pagina li traduce, così nessuno può far comparire un testo a piacere.
-    frag = f"token={quote(token)}" if token else f"errore={quote(error)}"
-    return RedirectResponse(f"/sign-in#{frag}", status_code=302)
-
-
-@users_router.get("/auth/google/start")
-async def google_start(request: Request):
-    cid, _, _ = _google()
-    if not cid:
-        raise HTTPException(404, "Login con Google non configurato")
-    now = time.time()
-    for k in [k for k, v in _pending.items() if v["exp"] < now]:
-        _pending.pop(k, None)
-    ip = request.client.host if request.client else "?"
-    if sum(1 for v in _pending.values() if v.get("ip") == ip) >= 10:
-        raise HTTPException(429, "Troppi accessi in corso: riprova tra qualche minuto")
-    while len(_pending) >= 200:   # 2° giro dell'agente: si scarta il più vecchio, non si blocca il login a tutti
-        _pending.pop(min(_pending, key=lambda k: _pending[k]["exp"]))
-    state = secrets.token_urlsafe(24)
-    verifier = secrets.token_urlsafe(64)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
-    redirect = _callback_url(request)
-    _pending[state] = {"verifier": verifier, "redirect": redirect, "exp": now + 600, "ip": ip}
-    q = urlencode({"client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": "openid email profile",
-                   "state": state, "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account"})
-    return RedirectResponse(f"{GOOGLE_AUTH}?{q}", status_code=302)
-
-
-@users_router.get("/auth/google/callback")
-async def google_callback(request: Request, state: str = "", code: str = "", error: str = ""):
-    import httpx
-    p = _pending.pop(state, None)
-    if error:
-        return _back("annullato")
-    if not p or p["exp"] < time.time() or not code:
-        return _back("scaduto")
-    cid, secret, emails = _google()
-    try:
-        async with httpx.AsyncClient(timeout=20) as c:
-            t = await c.post(GOOGLE_TOKEN, data={"client_id": cid, "client_secret": secret, "code": code,
-                                                 "code_verifier": p["verifier"], "grant_type": "authorization_code",
-                                                 "redirect_uri": p["redirect"]})
-            if t.status_code != 200:
-                return _back("rifiutato")
-            u = await c.get(GOOGLE_USERINFO, headers={"Authorization": f"Bearer {t.json().get('access_token', '')}"})
-            info = u.json() if u.status_code == 200 else {}
-    except httpx.HTTPError:
-        return _back("rete")
-    email = str(info.get("email", "")).lower()
-    if not email or info.get("email_verified") is not True:
-        return _back("non_verificato")
-    if email not in emails:
-        return _back("non_ammesso")
+@users_router.put("/auth/password")
+async def set_password(body: PasswordIn, request: Request, response: Response, member: dict = Depends(require_approved)):
+    """Imposta, cambia o toglie (new vuota) la password dell'app. Se c'è già una password va scritta quella attuale.
+    I gettoni dati prima smettono di valere; chi la cambia riceve subito un gettone nuovo e resta dentro."""
+    if login_required() and not check_password(body.current):
+        raise HTTPException(403, "La password attuale non è giusta")
+    new = body.new
+    if new and len(new) < 6:
+        raise HTTPException(422, "La password deve avere almeno 6 caratteri")
+    if len(new) > 200:
+        raise HTTPException(422, "Password troppo lunga")
+    p = _hash_file()
+    if new:
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(_hash(new))
+        try:
+            tmp.chmod(0o600)
+        except OSError:
+            pass
+        tmp.replace(p)
+    else:
+        if os.environ.get("APP_PASSWORD"):
+            raise HTTPException(400, "Questa password è scritta nel file di configurazione (.env o config.json): si toglie da lì")
+        p.unlink(missing_ok=True)
+    new_generation()
+    if not new:
+        response.delete_cookie(COOKIE)
+        return {"password_required": False, "token": ""}
     token = make_token()
-    resp = _back(token=token)
     from server import real_scheme
-    resp.set_cookie(COOKIE, token, max_age=TOKEN_DAYS * 86400, httponly=True, samesite="lax",
-                    secure=real_scheme(request.headers, request.url.scheme) == "https")
-    return resp
+    response.set_cookie(COOKIE, token, max_age=TOKEN_DAYS * 86400, httponly=True, samesite="lax",
+                        secure=real_scheme(request.headers, request.url.scheme) == "https")
+    return {"password_required": True, "token": token}

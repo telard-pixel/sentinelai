@@ -8,6 +8,7 @@ import StorageSection from "@/components/StorageSection";
 import ThemeSelector from "@/components/ThemeSelector";
 import UsersSection from "@/components/UsersSection";
 import LogSection from "@/components/LogSection";
+import PasswordSection from "@/components/PasswordSection";
 import { Switch } from "@/components/ui/switch";
 
 function SliderRow({ testid, label, value, min, max, step, onChange, fmt }) {
@@ -38,6 +39,7 @@ export default function SettingsSheet({ open, onOpenChange, settings, onSave }) 
         <SheetHeader><SheetTitle className="font-heading text-gray-100">Impostazioni</SheetTitle></SheetHeader>
         <div className="mt-6 space-y-6">
           <ThemeSelector />
+          <PasswordSection />
           <UsersSection />
           <div className="space-y-4 rounded-md border border-white/10 bg-black/20 p-4" data-testid="clips-section">
             <label className="flex items-center justify-between font-mono text-[11px] uppercase tracking-wider text-gray-400">

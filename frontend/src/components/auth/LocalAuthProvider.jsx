@@ -28,6 +28,11 @@ export default function LocalAuthProvider({ children }) {
     return () => window.removeEventListener("sentinel-401", expired);
   }, [config, setToken]);
 
+  const refreshConfig = useCallback(async () => {
+    const r = await fetch(`${BACKEND}/api/auth/config`);
+    if (r.ok) setConfig(await r.json());
+  }, []);
+
   // Riprova mentre il backend si avvia (il modello YOLO impiega qualche secondo).
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +58,7 @@ export default function LocalAuthProvider({ children }) {
   return (
     <>
       {config && (
-        <AuthContext.Provider value={{ required: config.password_required, google: !!config.google, token, setToken, logout }}>
+        <AuthContext.Provider value={{ required: config.password_required, fromEnv: !!config.password_from_env, token, setToken, logout, refreshConfig }}>
           {children}
         </AuthContext.Provider>
       )}
