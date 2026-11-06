@@ -141,6 +141,18 @@ def videos_folder() -> Path:
     return Path.home() / "Videos" / APP
 
 
+def bundled_ffmpeg():
+    """ffmpeg incluso nel programma. Con IMAGEIO_FFMPEG_EXE impostato imageio-ffmpeg non lancia "ffmpeg -version"
+    per controllarlo: quel controllo, sui PC col Terminale di Windows 11, poteva far comparire un lampo (agente 106)."""
+    try:
+        import imageio_ffmpeg
+        found = sorted((Path(imageio_ffmpeg.__file__).parent / "binaries").glob("ffmpeg*"))
+        exe = [f for f in found if f.suffix.lower() == ".exe"] or found
+        return str(exe[0]) if exe else None
+    except Exception:
+        return None
+
+
 def make_app(data_dir: Path, password: str, rete: bool = False):
     # Solo questi nomi possono chiamare il server: un sito che si finge 127.0.0.1 (DNS rebinding) viene rifiutato.
     hosts = ["127.0.0.1", "localhost"] + (lan_addresses() if rete else [])
@@ -148,6 +160,9 @@ def make_app(data_dir: Path, password: str, rete: bool = False):
                       APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="",
                       ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG), SENTINEL_RETE="1" if rete else "0",
                       SENTINEL_CLIPS_DIR=str(videos_folder()))
+    ff = bundled_ffmpeg()
+    if ff and not os.environ.get("IMAGEIO_FFMPEG_EXE"):
+        os.environ["IMAGEIO_FFMPEG_EXE"] = ff
     sys.path.insert(0, str(BACKEND))
     import server  # noqa: E402  (legge le variabili qui sopra)
     from fastapi.staticfiles import StaticFiles
@@ -534,9 +549,12 @@ def console_windows_during(start) -> int:
     base = visible()
     proc = start()
     new = set()
-    while proc.poll() is None:
+    limit = time.monotonic() + 15        # un ffmpeg bloccato non deve fermare la CI
+    while proc.poll() is None and time.monotonic() < limit:
         new |= visible() - base
         time.sleep(0.02)
+    if proc.poll() is None:
+        proc.kill()
     return len(new)
 
 def prova(out_file: str) -> int:
@@ -607,6 +625,9 @@ def prova(out_file: str) -> int:
             seen_plain = console_windows_during(lambda: _ffmpeg_3s({}))
             seen_fixed = console_windows_during(lambda: _ffmpeg_3s(clips._no_window()))
             lines.append(f"INFO finestre del prompt: senza correzione {seen_plain}, con correzione {seen_fixed}")
+            lines.append(f"INFO IMAGEIO_FFMPEG_EXE = {os.environ.get('IMAGEIO_FFMPEG_EXE')}")
+            check(bool(os.environ.get("IMAGEIO_FFMPEG_EXE")) and Path(os.environ["IMAGEIO_FFMPEG_EXE"]).is_file(),
+                  "ffmpeg incluso indicato a imageio-ffmpeg (niente controllo con finestra)")
             check(seen_fixed == 0, "clip senza finestra del prompt" + ("" if seen_plain else " (controllo non verificabile qui)"))
         x = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/events/export?format=xlsx", timeout=20).read()
         check(x[:2] == b"PK", "esportazione Excel")
