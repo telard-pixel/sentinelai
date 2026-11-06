@@ -1,4 +1,4 @@
-"""SentinelAI Vision Guard - backend (FastAPI + MongoDB + YOLOv8 locale).
+"""SentinelAI Vision Guard - backend (FastAPI + MongoDB + YOLO11 locale).
 
 Ricostruito il 05/11/2026: l'inizio (indici, router, load_settings, get_camera) è quello originale,
 il resto segue le chiamate del frontend. Login locale con password (auth_local) al posto di Clerk."""
@@ -230,7 +230,7 @@ async def root():
 
 @public.get("/health")
 async def health():
-    return {"status": "ok", "model": "YOLOv8n (locale)", "model_loaded": detector.model is not None}
+    return {"status": "ok", "model": "YOLO11s (locale)", "model_loaded": detector.model is not None}
 
 
 # ---------------------------------------------------------------- impostazioni
@@ -830,7 +830,7 @@ async def startup():
         await db.cameras.insert_one(Camera(**DEMO_CAMERA).model_dump())
     app.state.cleanup_task = asyncio.create_task(cleanup_loop())
     await asyncio.to_thread(detector.load)
-    logger.info("YOLOv8 caricato (%s)", detector.kind)
+    logger.info("YOLO11s caricato (%s)", detector.kind)
     # Le telecamere di rete accese restano accese anche dopo un riavvio del programma.
     settings = await load_settings()
     for d in await db.cameras.find({"monitor": True}, {"_id": 0}).to_list(200):

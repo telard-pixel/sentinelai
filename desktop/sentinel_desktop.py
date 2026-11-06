@@ -1,6 +1,10 @@
 """SentinelAI per Windows: avvia il server dentro il programma, apre la finestra dell'app e resta
 nell'area di notifica (vicino all'orologio).
 
+Finestra (06/11/2026): WebView2 dentro il programma stesso (pywebview), non più Edge in modalità app.
+Chiudendo la finestra il programma resta acceso vicino all'orologio e le telecamere continuano a essere
+controllate; "Esci" dall'icona lo spegne. Se WebView2 manca si torna alla finestra di Edge.
+
   SentinelAI.exe                 apre l'app (se è già aperta, mostra solo la finestra)
   SentinelAI.exe --minimizzato   parte solo con l'icona (usato dall'avvio con Windows)
   SentinelAI.exe --prova FILE    prova automatica senza finestra (CI): scrive il risultato in FILE
@@ -249,12 +253,117 @@ def set_autostart(on: bool):
                 pass
 
 
-def run_tray(port: int, srv):
+# ------------------------------------------------------------------ finestra propria (WebView2)
+
+SHOW_EVENT = "Local\\SentinelAI-mostra"   # il secondo avvio lo segnala: la finestra torna davanti
+
+
+class AppWindow:
+    """Finestra WebView2 di SentinelAI. webview.start() deve girare nel thread principale."""
+
+    def __init__(self, port: int):
+        self.port = port
+        self.window = None
+        self.quitting = False
+        self.ready = threading.Event()
+        self.close_hint_done = False
+        self.tray = None
+
+    def create(self, hidden: bool):
+        import webview
+        self.window = webview.create_window(
+            "SentinelAI", f"http://127.0.0.1:{self.port}/", width=1440, height=900, min_size=(900, 600),
+            hidden=hidden, background_color="#090D14", text_select=True)
+        self.window.events.closing += self.on_closing
+        self.window.events.loaded += lambda: self.ready.set()
+
+    def on_closing(self):
+        if self.quitting or self.tray is None:
+            return True      # senza icona vicino all'orologio la X chiude davvero (sennò non si spegnerebbe più)
+        # La X nasconde e basta: il server e le telecamere restano accesi (come chiudere Edge prima).
+        threading.Thread(target=self.window.hide, daemon=True).start()
+        if not self.close_hint_done and self.tray is not None:
+            self.close_hint_done = True
+            try:
+                self.tray.notify("SentinelAI resta acceso qui vicino all'orologio. Per spegnerlo: tasto destro → Esci.",
+                                 "SentinelAI")
+            except Exception:
+                pass
+        return False
+
+    def show(self):
+        if self.window is None:
+            return
+        try:
+            self.window.show()
+            self.window.restore()
+        except Exception:
+            log("finestra: impossibile mostrarla:\n" + traceback.format_exc())
+
+    def quit(self):
+        self.quitting = True
+        if self.window is not None:
+            try:
+                self.window.destroy()
+            except Exception:
+                pass
+
+    def run(self, hidden: bool) -> bool:
+        """Blocca finché la finestra non viene chiusa con Esci. False se WebView2 non è disponibile."""
+        try:
+            import webview
+            webview.settings["ALLOW_DOWNLOADS"] = True                 # clip ed Excel si scaricano
+            webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True  # link esterni nel browser normale
+            self.create(hidden)
+            webview.start(gui="edgechromium", private_mode=False, storage_path=str(DATA / "finestra-app"))
+            return True
+        except Exception:
+            log("finestra WebView2 non disponibile, uso Edge:\n" + traceback.format_exc())
+            self.window = None
+            return False
+
+
+def listen_show_requests(callback):
+    """Aspetta il segnale del secondo avvio (doppio clic sull'icona del desktop) e mostra la finestra."""
+    if os.name != "nt":
+        return
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateEventW.restype = ctypes.c_void_p
+    h = k32.CreateEventW(None, False, False, SHOW_EVENT)
+    if not h:
+        return
+
+    def loop():
+        while True:
+            if k32.WaitForSingleObject(ctypes.c_void_p(h), 0xFFFFFFFF) == 0:
+                callback()
+
+    threading.Thread(target=loop, daemon=True, name="mostra").start()
+
+
+def signal_show() -> bool:
+    """Dal secondo avvio: chiede al SentinelAI già acceso di mostrare la sua finestra."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenEventW.restype = ctypes.c_void_p
+    h = k32.OpenEventW(0x0002, False, SHOW_EVENT)   # EVENT_MODIFY_STATE
+    if not h:
+        return False
+    ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY: l'altro processo può venire davanti
+    ok = bool(k32.SetEvent(ctypes.c_void_p(h)))
+    k32.CloseHandle(ctypes.c_void_p(h))
+    return ok
+
+
+def run_tray(port: int, srv, show=None, on_exit=None, background=False):
     import pystray
     from PIL import Image
 
     def apri(icon=None, item=None):
-        open_window(port)
+        (show or (lambda: open_window(port)))()
 
     def autostart(icon, item):
         set_autostart(not autostart_enabled())
@@ -268,6 +377,8 @@ def run_tray(port: int, srv):
     def esci(icon, item):
         srv.should_exit = True
         icon.stop()
+        if on_exit:
+            on_exit()
 
     menu = pystray.Menu(
         pystray.MenuItem("Apri SentinelAI", apri, default=True),
@@ -278,6 +389,9 @@ def run_tray(port: int, srv):
         pystray.MenuItem("Esci", esci),
     )
     icon = pystray.Icon(APP, Image.open(ICON), f"SentinelAI {VERSION}", menu)
+    if background:
+        threading.Thread(target=icon.run, daemon=True, name="icona").start()
+        return icon
     icon.run()
 
 
@@ -349,7 +463,7 @@ def prova(out_file: str) -> int:
         from zoneinfo import ZoneInfo
         check(ZoneInfo("Europe/Rome") is not None, "fusi orari (Europe/Rome) disponibili")
         lg = get("/api/log?lines=200")
-        check(lg["available"] and "YOLOv8 caricato" in lg["text"], "registro leggibile dall'app")
+        check(lg["available"] and "YOLO11s caricato" in lg["text"], "registro leggibile dall'app")
         check(get("/api/monitor") == {}, "nessuna telecamera di rete accesa all'avvio")
     except Exception:
         ok = False
@@ -401,8 +515,8 @@ def main():
         for _ in range(240):   # fino a 2 minuti: su un PC lento il modello impiega un po' a caricarsi
             p = running_port()
             if p and health(p):
-                if "--minimizzato" not in args:
-                    open_window(p)
+                if "--minimizzato" not in args and not signal_show():
+                    open_window(p)     # SentinelAI vecchio (finestra di Edge) o segnale non disponibile
                 return
             time.sleep(0.5)
         return
@@ -422,7 +536,32 @@ def main():
         if health(port):
             break
         time.sleep(0.5)
-    if "--minimizzato" not in args:
+    hidden = "--minimizzato" in args
+    if not os.environ.get("SENTINEL_FINESTRA_EDGE"):
+        win = AppWindow(port)
+
+        def show_any():   # finestra propria se c'è, altrimenti quella di Edge
+            win.show() if win.window is not None else open_window(port)
+
+        listen_show_requests(show_any)
+        try:
+            win.tray = run_tray(port, srv, show=show_any, on_exit=win.quit, background=True)
+        except Exception:
+            log("icona di notifica non disponibile:\n" + traceback.format_exc())
+        if win.run(hidden):
+            srv.should_exit = True
+            time.sleep(1)
+            return
+        if win.tray is not None:
+            # WebView2 mancante: finestra di Edge, l'icona c'è già e resta finché non si sceglie Esci.
+            if not hidden:
+                open_window(port)
+            while not srv.should_exit:
+                time.sleep(1)
+            time.sleep(1)
+            return
+    listen_show_requests(lambda: open_window(port))
+    if not hidden:
         open_window(port)
     try:
         run_tray(port, srv)

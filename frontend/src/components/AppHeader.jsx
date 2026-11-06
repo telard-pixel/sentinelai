@@ -58,7 +58,7 @@ export default function AppHeader({ tab, setTab, modelOk, alertCount, onSettings
       <div className="ml-auto flex items-center gap-4">
         <span data-testid="model-status" className="hidden items-center gap-2 font-mono text-[10px] uppercase tracking-wider text-gray-400 md:flex">
           <span className={`h-2 w-2 rounded-full ${modelOk ? "bg-emerald-400 shadow-[0_0_8px_#10B981]" : "bg-amber-400"}`} />
-          {modelOk ? "YOLOv8 pronto" : "Motore in avvio"}
+          {modelOk ? "YOLO11 pronto" : "Motore in avvio"}
         </span>
         <span className="hidden lg:inline"><Clock /></span>
         {installEvt && (

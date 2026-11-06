@@ -1,4 +1,4 @@
-# Versione Windows: niente PyTorch/Ultralytics (YOLOv8n gira in ONNX con OpenCV), niente MongoDB (SQLite), ffmpeg incluso (imageio-ffmpeg) per le clip H.264: il codificatore di Windows non c'è dappertutto (manca su Windows Server).
+# Versione Windows: niente PyTorch/Ultralytics (YOLO11s gira in ONNX con OpenCV), niente MongoDB (SQLite), ffmpeg incluso (imageio-ffmpeg) per le clip H.264: il codificatore di Windows non c'è dappertutto (manca su Windows Server).
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
@@ -11,6 +11,9 @@ pymongo==4.9.2
 opencv-python-headless==4.10.0.84
 websockets==14.1
 pystray==0.19.5
+# finestra propria: WebView2 (Edge integrato in Windows 10/11) dentro il programma
+pywebview==6.2.1
+pythonnet==3.0.5
 pillow==11.0.0
 pyinstaller==6.11.1
 imageio-ffmpeg==0.5.1

@@ -23,6 +23,8 @@ def annotate_frame(frame, tracks, caption):
     img = cv2.resize(frame, (int(w * scale), int(h * scale))) if scale < 1 else frame.copy()
     ih, iw = img.shape[:2]
     for t in tracks:
+        if t.get("fixed"):
+            continue          # cose ferme (mai mosse): non si disegnano nella clip
         c = CAT_BGR.get(t["category"], (255, 255, 255))
         x1, y1, x2, y2 = (int(t["box"][0] * iw), int(t["box"][1] * ih), int(t["box"][2] * iw), int(t["box"][3] * ih))
         cv2.rectangle(img, (x1, y1), (x2, y2), c, 2)

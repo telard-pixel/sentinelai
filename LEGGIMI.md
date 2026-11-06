@@ -1,6 +1,6 @@
 # SentinelAI · Vision Guard
 
-Monitoraggio telecamere con AI locale (YOLOv8): persone, veicoli, animali e oggetti, la loro direzione,
+Monitoraggio telecamere con AI locale (YOLO11): persone, veicoli, animali e oggetti, la loro direzione,
 linea virtuale con conteggio entrate/uscite, zone con allarme di ingresso e di sosta, clip video degli allarmi,
 mappa di calore, statistiche, esportazione CSV/Excel e allarmi su Telegram. App installabile (PWA) su PC e telefono.
 
@@ -19,7 +19,7 @@ nano backend/.env          # metti APP_PASSWORD e, se vuoi Telegram, TELEGRAM_BO
 docker compose up -d --build
 ```
 
-Poi apri `http://<indirizzo-del-server>:8080`. La prima compilazione scarica PyTorch (CPU) e il modello YOLOv8n:
+Poi apri `http://<indirizzo-del-server>:8080`. La prima compilazione scarica PyTorch (CPU) e il modello YOLO11s:
 ci vogliono alcuni minuti. I dati (MongoDB e chiave dei login) stanno in `./dati/`.
 
 ## Installarla come app
@@ -58,12 +58,14 @@ e aprire `https://<nome-del-server>.<tailnet>.ts.net`: compare il pulsante **Ins
 ## Versione Windows (programma da installare)
 
 `SentinelAI-Setup-<versione>.exe`: si installa per l'utente (niente permessi di amministratore), crea l'icona nel menu Start
-(e se vuoi sul desktop) e può partire insieme a Windows. Si apre in una finestra sua (Edge in modalità app) e resta
-nell'area di notifica vicino all'orologio: *Apri SentinelAI*, *Avvia con Windows*, *Cartella dei dati*, *Esci*.
+(e se vuoi sul desktop) e può partire insieme a Windows. Si apre in una finestra sua (WebView2, il motore di Edge
+già presente in Windows 10/11, dentro il programma; se manca si usa Edge) e resta nell'area di notifica vicino
+all'orologio: *Apri SentinelAI*, *Avvia con Windows*, *Cartella dei dati*, *Esci*. La X chiude solo la finestra:
+le telecamere restano controllate finché non scegli *Esci*.
 
 Differenze rispetto alla versione Docker, solo per essere un programma leggero:
 - database in un file SQLite (`backend/docstore.py`, stessa interfaccia di MongoDB) invece del server MongoDB;
-- YOLOv8n in formato ONNX con OpenCV invece di PyTorch (installer molto più leggero: niente PyTorch da oltre 1 GB);
+- YOLO11s in formato ONNX con OpenCV invece di PyTorch (installer molto più leggero: niente PyTorch da oltre 1 GB);
 - clip H.264 con ffmpeg incluso nel programma (se mancasse, il codificatore di Windows);
 - nessun login (si usa sul proprio PC). Per metterlo: `%LOCALAPPDATA%\SentinelAI\config.json` → `"password": "..."`.
   Con `"rete": true` l'app risponde anche agli altri dispositivi della rete (porta 8765).
@@ -71,7 +73,7 @@ Differenze rispetto alla versione Docker, solo per essere un programma leggero:
 Dati in `%LOCALAPPDATA%\SentinelAI` (database, clip, registro `sentinelai.log`). Il token Telegram si mette dall'app
 (Allarmi → Allarmi su Telegram).
 
-Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esporta YOLOv8n in ONNX, crea l'exe con
+Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esporta YOLO11s in ONNX, crea l'exe con
 PyInstaller e l'installer con Inno Setup, **prova l'exe e l'installer** (`SentinelAI.exe --prova`) e con un tag `vX.Y.Z`
 pubblica la Release.
 

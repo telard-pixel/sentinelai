@@ -1,16 +1,19 @@
-# PyInstaller: SentinelAI.exe (cartella), con server, app compilata e modello YOLOv8n ONNX.
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+# PyInstaller: SentinelAI.exe (cartella), con server, app compilata e modello YOLO11s ONNX.
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 hidden = (collect_submodules("uvicorn") + collect_submodules("websockets")
           + ["server", "session", "clips", "detection", "models", "telegram_bot", "auth_local", "docstore",
-             "pystray._win32", "openpyxl", "imageio_ffmpeg", "tzdata", "zoneinfo"])
+             "pystray._win32", "openpyxl", "imageio_ffmpeg", "tzdata", "zoneinfo",
+             "webview.platforms.winforms", "webview.platforms.edgechromium", "clr"])
 
 a = Analysis(
     ["sentinel_desktop.py"],
     pathex=["../backend"],
-    datas=[("../frontend/build", "static"), ("../models/yolov8n.onnx", "models"),
+    datas=[("../frontend/build", "static"), ("../models/yolo11s.onnx", "models"),
            ("../frontend/public/icon-192.png", "."), ("VERSIONE", ".")]
-          + collect_data_files("imageio_ffmpeg", includes=["binaries/*"]) + collect_data_files("tzdata"),
+          + collect_data_files("imageio_ffmpeg", includes=["binaries/*"]) + collect_data_files("tzdata")
+          + collect_data_files("webview"),
+    binaries=collect_dynamic_libs("webview"),
     hiddenimports=hidden,
     excludes=["torch", "torchvision", "ultralytics", "motor", "pandas", "matplotlib", "tkinter",
               "IPython", "scipy"],

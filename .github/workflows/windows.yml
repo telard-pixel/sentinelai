@@ -34,12 +34,12 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
 
-      # ---------------------------------------------------------------- modello YOLOv8n -> ONNX (una volta, poi in cache)
+      # ---------------------------------------------------------------- modello YOLO11s -> ONNX (una volta, poi in cache)
       - name: Cache modello
         id: modello
         uses: actions/cache@v4
-        with: { path: models/yolov8n.onnx, key: yolov8n-onnx-ultralytics-8.3.55-opset12 }
-      - name: Esporta YOLOv8n in ONNX
+        with: { path: models/yolo11s.onnx, key: yolo11s-onnx-ultralytics-8.3.55-opset12 }
+      - name: Esporta YOLO11s in ONNX
         if: steps.modello.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
@@ -48,10 +48,10 @@ jobs:
           C:\esporta\Scripts\python -m pip install -q torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
           C:\esporta\Scripts\python -m pip install -q ultralytics==8.3.55 onnx==1.17.0 torch==2.5.1 torchvision==0.20.1 --extra-index-url https://download.pytorch.org/whl/cpu
           C:\esporta\Scripts\python -c "import torch; print('torch', torch.__version__)"
-          C:\esporta\Scripts\python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=False, dynamic=False)"
+          C:\esporta\Scripts\python -c "from ultralytics import YOLO; YOLO('yolo11s.pt').export(format='onnx', imgsz=640, opset=12, simplify=False, dynamic=False)"
           New-Item -ItemType Directory -Force models | Out-Null
-          Move-Item yolov8n.onnx models\yolov8n.onnx -Force
-          Get-Item models\yolov8n.onnx | Format-List Name, Length
+          Move-Item yolo11s.onnx models\yolo11s.onnx -Force
+          Get-Item models\yolo11s.onnx | Format-List Name, Length
 
       # ---------------------------------------------------------------- exe
       - name: Costruisci SentinelAI.exe
@@ -84,6 +84,55 @@ jobs:
           Get-Content "$env:LOCALAPPDATA\SentinelAI\sentinelai.log" -Tail 15
           Get-Process SentinelAI -ErrorAction SilentlyContinue | Stop-Process -Force
           if ($n -ne 1 -or -not $ok) { Write-Error "attesi 1 processo e server vivo (trovati $n, server $ok)"; exit 1 }
+
+      - name: Prova la finestra propria (WebView2, X nasconde, secondo avvio la riporta)
+        shell: pwsh
+        run: |
+          Add-Type @"
+          using System; using System.Runtime.InteropServices;
+          public class W { [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h); }
+          "@
+          Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+          $exe = (Resolve-Path dist\SentinelAI\SentinelAI.exe).Path
+          $fail = @()
+          Start-Process -FilePath $exe
+          Start-Sleep -Seconds 45
+          $p = Get-Process SentinelAI -ErrorAction SilentlyContinue | Select-Object -First 1
+          $porta = Get-Content "$env:LOCALAPPDATA\SentinelAI\porta.txt"
+          Write-Host "titolo finestra: '$($p.MainWindowTitle)'  handle: $($p.MainWindowHandle)"
+          if ($p.MainWindowTitle -ne 'SentinelAI') { $fail += 'finestra SentinelAI non trovata' }
+          $wv = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -like '*finestra-app*' })
+          $edge = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like '*--app=*' })
+          Write-Host "processi WebView2 nostri: $($wv.Count)  Edge --app: $($edge.Count)"
+          if ($wv.Count -lt 1) { $fail += 'WebView2 non partito' }
+          if ($edge.Count -gt 0) { $fail += 'aperto Edge invece della finestra propria' }
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$PWD\finestra.png")
+          # secondo avvio: nessun secondo programma
+          Start-Process -FilePath $exe; Start-Sleep -Seconds 8
+          $n = @(Get-Process SentinelAI).Count
+          if ($n -ne 1) { $fail += "secondo avvio: $n processi" }
+          # X: la finestra si nasconde, il server resta vivo
+          $null = $p.CloseMainWindow(); Start-Sleep -Seconds 4
+          $h = $p.MainWindowHandle
+          $alive = -not $p.HasExited
+          $ok = $false; try { $ok = (Invoke-RestMethod "http://127.0.0.1:$porta/api/health").status -eq 'ok' } catch {}
+          Write-Host "dopo la X: processo vivo $alive, server $ok, visibile $([W]::IsWindowVisible($h))"
+          if (-not $alive -or -not $ok) { $fail += 'la X ha spento il programma' }
+          if ([W]::IsWindowVisible($h)) { $fail += 'la X non ha nascosto la finestra' }
+          # nuovo avvio: la finestra torna visibile
+          Start-Process -FilePath $exe; Start-Sleep -Seconds 8
+          Write-Host "dopo il nuovo avvio: visibile $([W]::IsWindowVisible($h)), processi $(@(Get-Process SentinelAI).Count)"
+          if (-not [W]::IsWindowVisible($h)) { $fail += 'il nuovo avvio non ha riportato la finestra' }
+          Get-Content "$env:LOCALAPPDATA\SentinelAI\sentinelai.log" -Tail 20
+          Get-Process SentinelAI -ErrorAction SilentlyContinue | Stop-Process -Force
+          if ($fail.Count) { Write-Error ($fail -join '; '); exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: finestra, path: finestra.png, if-no-files-found: ignore }
 
       # ---------------------------------------------------------------- installer
       - name: Installer (Inno Setup)

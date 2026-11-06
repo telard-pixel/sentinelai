@@ -20,7 +20,7 @@ function AuthShell({ children }) {
           <h1 className="font-heading text-4xl font-bold text-gray-100">Monitoraggio telecamere con AI locale</h1>
           <p className="text-gray-400">Persone, veicoli e animali, la loro direzione, zone e allarmi con clip video. Accesso riservato.</p>
         </div>
-        <p className="relative font-mono text-[10px] uppercase tracking-[0.25em] text-gray-500">Vision Guard · YOLOv8</p>
+        <p className="relative font-mono text-[10px] uppercase tracking-[0.25em] text-gray-500">Vision Guard · YOLO11</p>
       </div>
       <div className="flex flex-1 items-center justify-center p-6">{children}</div>
     </div>

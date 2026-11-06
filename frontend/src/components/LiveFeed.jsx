@@ -76,7 +76,7 @@ export default function LiveFeed({ stream, camera, onCameraChange, compact, maxH
             {!compact && <p className="relative max-w-sm text-center text-sm text-gray-500">Premi <span className="text-emerald-400">Avvia</span> per iniziare il monitoraggio di questa telecamera.</p>}
           </Center>
         )}
-        {status.state === "connecting" && <Center><Loader2 className="h-8 w-8 animate-spin text-emerald-400" /><p className="font-mono text-xs uppercase tracking-widest text-gray-400">Connessione al motore YOLOv8…</p></Center>}
+        {status.state === "connecting" && <Center><Loader2 className="h-8 w-8 animate-spin text-emerald-400" /><p className="font-mono text-xs uppercase tracking-widest text-gray-400">Connessione al motore YOLO11…</p></Center>}
         {status.state === "error" && <Center><AlertTriangle className="h-8 w-8 text-red-400" /><p data-testid={`stream-error-${camera.id}`} className="max-w-md text-center text-sm text-red-300">{status.error}</p></Center>}
         {heat && heatData && <HeatmapCanvas data={heatData} testid={`heatmap-overlay-${camera.id}`} />}
         <OverlayCanvas tracks={live ? result.tracks : []} line={camera.line} showLine={live || mode === "line"} mode={mode}

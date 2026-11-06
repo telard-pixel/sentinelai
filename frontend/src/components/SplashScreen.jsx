@@ -41,7 +41,7 @@ export default function SplashScreen({ ready, message }) {
         <div className="splash-title">SENTINEL<span>·AI</span></div>
         <div className="splash-sub">VISION GUARD</div>
         <div className="splash-bar"><span /></div>
-        <div className="splash-msg">{message || "Avvio del motore YOLOv8…"}</div>
+        <div className="splash-msg">{message || "Avvio del motore YOLO11…"}</div>
       </div>
     </div>
   );

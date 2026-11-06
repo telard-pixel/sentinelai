@@ -8,7 +8,11 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-MODEL_PATH = Path(__file__).parent / "models" / "yolov8n.pt"
+# 06/11/2026: YOLO11s al posto di YOLOv8n. Prova sulla clip del garage di notte (IR): YOLOv8n vedeva una
+# "persona" (bici appesa) in 51 fotogrammi su 110 (fino a 0,50); YOLO11s in nessuno (max 0,13) e trova più
+# persone vere nel demo (16 contro 13). È circa 3 volte più lento.
+MODEL_NAME = "yolo11s"
+MODEL_PATH = Path(__file__).parent / "models" / f"{MODEL_NAME}.pt"
 
 COCO_IT = [
     "persona", "bicicletta", "auto", "moto", "aereo", "autobus", "treno", "camion", "barca", "semaforo",
@@ -49,12 +53,12 @@ def heading_of(dx: float, dy: float, min_mag: float = 0.012):
     return name, arrow, round(ang, 1)
 
 
-ONNX_PATH = Path(os.environ.get("SENTINEL_MODEL_DIR", MODEL_PATH.parent)) / "yolov8n.onnx"
+ONNX_PATH = Path(os.environ.get("SENTINEL_MODEL_DIR", MODEL_PATH.parent)) / f"{MODEL_NAME}.onnx"
 IMGSZ = 640
 
 
 class Detector:
-    """YOLOv8n. Con models/yolov8n.onnx gira con OpenCV DNN (versione Windows: niente PyTorch);
+    """YOLO11s. Con models/yolo11s.onnx gira con OpenCV DNN (versione Windows: niente PyTorch);
     altrimenti con Ultralytics come nel progetto originale (versione Docker)."""
 
     def __init__(self):
@@ -72,10 +76,10 @@ class Detector:
             return
         from ultralytics import YOLO
         MODEL_PATH.parent.mkdir(exist_ok=True)
-        self.model = YOLO(str(MODEL_PATH) if MODEL_PATH.exists() else "yolov8n.pt")
+        self.model = YOLO(str(MODEL_PATH) if MODEL_PATH.exists() else f"{MODEL_NAME}.pt")
         self.kind = "ultralytics"
-        if not MODEL_PATH.exists() and Path("yolov8n.pt").exists():
-            Path("yolov8n.pt").rename(MODEL_PATH)
+        if not MODEL_PATH.exists() and Path(f"{MODEL_NAME}.pt").exists():
+            Path(f"{MODEL_NAME}.pt").rename(MODEL_PATH)
         self.model.predict(np.zeros((320, 320, 3), dtype=np.uint8), verbose=False)
 
     def _detect_onnx(self, frame, conf, iou, classes):
@@ -163,6 +167,9 @@ class Track:
     def __init__(self, tid, cls, conf, box, cx, cy, now):
         self.id, self.cls, self.conf, self.box = tid, cls, conf, box
         self.first = (cx, cy)
+        self.born = now
+        self.max_disp = 0.0       # spostamento massimo dal punto di nascita (per riconoscere le cose ferme)
+        self.fixed = False        # "cosa ferma" (es. bici appesa scambiata per persona): niente eventi
         self.history = deque([(cx, cy)], maxlen=20)
         self.last_seen = now
         self.hits = 1
@@ -173,6 +180,9 @@ class Track:
 
 
 class Tracker:
+    MAX_GATE = 0.35       # frazione dell'inquadratura
+    GATE_SPEED = 0.5      # inquadrature al secondo: più veloce di una persona che attraversa tutta l'immagine in 2 s
+
     def __init__(self, max_dist=0.12, ttl=1.5):
         self.tracks: dict[int, Track] = {}
         self.next_id = 1
@@ -184,11 +194,15 @@ class Tracker:
         cents = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for _, _, b in dets]
         for ti, tr in self.tracks.items():
             lx, ly = tr.history[-1]
+            # 06/11/2026: con YOLO11s si analizzano 2-3 fotogrammi al secondo invece di 5-6: chi cammina si sposta
+            # di più tra un'analisi e l'altra e con 0,12 fisso la traccia si spezzava. Il limite cresce col tempo
+            # passato dall'ultimo avvistamento (oltre 0,2 s), fino a MAX_GATE.
+            gate = min(self.MAX_GATE, self.max_dist + max(0.0, now - tr.last_seen - 0.2) * self.GATE_SPEED)
             for di, (c, _, _) in enumerate(dets):
                 if c != tr.cls:
                     continue
                 d = math.hypot(cents[di][0] - lx, cents[di][1] - ly)
-                if d < self.max_dist:
+                if d < gate:
                     pairs.append((d, ti, di))
         pairs.sort()
         used_t, used_d, active = set(), set(), []
@@ -201,6 +215,7 @@ class Tracker:
             c, conf, box = dets[di]
             tr.conf, tr.box, tr.last_seen = conf, box, now
             tr.history.append(cents[di])
+            tr.max_disp = max(tr.max_disp, math.hypot(cents[di][0] - tr.first[0], cents[di][1] - tr.first[1]))
             tr.hits += 1
             active.append(tr)
         for di, (c, conf, box) in enumerate(dets):

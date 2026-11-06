@@ -31,6 +31,24 @@ LINE_STRONG = 0.045       # ...ma se è già ben oltre la linea (3 margini) bast
 LINE_ARM = 0.07           # un passaggio conta solo se prima l'oggetto è stato DAVVERO lontano dall'altra parte
 ZONE_EXIT_GRACE = 1.5     # secondi fuori dalla zona prima di considerarla davvero uscita
 BACKGROUND_SECONDS = 60
+# Cose ferme (06/11/2026, clip del garage: bici appesa vista come "persona" per minuti). Una traccia che dalla
+# nascita non si è MAI spostata più di STATIC_MOVE per STATIC_LEARN secondi diventa un "punto fisso": niente
+# eventi, conteggi o mappa di calore. Le tracce nuove dello stesso tipo nello stesso punto (sovrapposizione
+# ≥ STATIC_IOU) sono subito ferme. Appena una traccia si muove davvero (≥ STATIC_RELEASE) torna normale.
+# Chi entra camminando si è già spostato: non diventa mai "fermo", nemmeno se poi resta immobile in una zona.
+STATIC_LEARN = 300
+STATIC_MOVE = 0.02
+STATIC_RELEASE = 0.03
+STATIC_IOU = 0.6
+STATIC_FORGET = 900       # un punto fisso non più visto da 15 minuti si dimentica
+
+
+def box_iou(a, b) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
 def local_tz_offset() -> int:
@@ -98,6 +116,7 @@ class StreamSession:
         self.last_background = 0.0
         # track_id -> zone_id -> {"since": istante d'ingresso, "dwell": allarme di sosta già dato}
         self.zone_state: dict[int, dict[str, dict]] = {}
+        self.fixed_spots: list[dict] = []     # {"cls", "box", "seen"}: cose ferme scambiate per oggetti
 
     def update(self, camera: Camera, settings: Settings):
         self.camera, self.settings = camera, settings
@@ -125,6 +144,24 @@ class StreamSession:
         if rule:
             telegram_bot.send_photo_bg(self.settings, out, snap, self.tz_offset)
         return out
+
+    def update_fixed(self, active, now):
+        self.fixed_spots = [sp for sp in self.fixed_spots if now - sp["seen"] < STATIC_FORGET]
+        for tr in active:
+            if tr.max_disp >= STATIC_RELEASE:
+                if tr.fixed:
+                    logger.info("[%s] %s #%d si è mosso: non è più una cosa ferma", self.camera.name, COCO_IT[tr.cls], tr.id)
+                tr.fixed = False
+                continue
+            spot = next((sp for sp in self.fixed_spots if sp["cls"] == tr.cls and box_iou(sp["box"], tr.box) >= STATIC_IOU), None)
+            if spot is None and not tr.fixed and tr.max_disp < STATIC_MOVE and now - tr.born >= STATIC_LEARN:
+                spot = {"cls": tr.cls, "box": tuple(tr.box), "seen": now}
+                self.fixed_spots.append(spot)
+                logger.info("[%s] %s ferma da %d s nello stesso punto: la tratto come cosa ferma (niente eventi)",
+                            self.camera.name, COCO_IT[tr.cls], STATIC_LEARN)
+            if spot is not None:
+                spot["seen"] = now
+                tr.fixed = True
 
     def add_heat(self, tr):
         cx, cy = tr.history[-1]
@@ -206,8 +243,12 @@ class StreamSession:
             self.tz_offset = self.recorder.tz_offset = local_tz_offset()
         dets = await asyncio.to_thread(detector.detect, frame, s.conf, s.iou, s.classes)
         active, expired = self.tracker.update(dets, now)
+        self.update_fixed(active, now)
         events, line, active_zones = [], self.camera.line.model_dump(), set()
         for tr in active:
+            if tr.fixed:
+                self.zone_state.pop(tr.id, None)
+                continue
             cx, cy = tr.history[-1]
             if tr.conf > tr.snap_conf + 0.05:
                 tr.snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} {tr.conf:.2f}")
@@ -253,6 +294,10 @@ class StreamSession:
                 continue
             await self._count_crossing(frame, tr, side, now, events, within_segment(line, cx, cy))
         for tr in expired:
+            if tr.fixed:
+                self.zone_state.pop(tr.id, None)
+                self.heat_seen.discard(tr.id)
+                continue
             # 5° giro dell'agente: chi COMPARE già vicino alla linea (porta accanto, linea vicino al bordo) non si
             # armava mai e non veniva contato. Alla fine della traccia: se partenza e arrivo stanno da parti opposte,
             # con uno spostamento netto di almeno 2×LINE_STRONG e almeno un estremo lontano (LINE_ARM), conta una volta.
@@ -275,7 +320,7 @@ class StreamSession:
             name, arrow, ang = heading_of(hx, hy)
             tracks.append({"id": tr.id, "class_id": tr.cls, "label": COCO_IT[tr.cls], "category": category_of(tr.cls),
                            "conf": round(tr.conf, 3), "box": [round(v, 4) for v in tr.box], "heading": name,
-                           "arrow": arrow, "angle": ang, "dx": round(hx, 4), "dy": round(hy, 4)})
+                           "arrow": arrow, "angle": ang, "dx": round(hx, 4), "dy": round(hy, 4), "fixed": tr.fixed})
         await self.recorder.push(now, frame, tracks)
         if now - self.last_flush >= HEAT_FLUSH_SECONDS:
             self.last_flush = now
