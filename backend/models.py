@@ -115,6 +115,15 @@ def split_url(url: str):
     if not m:
         return None
     rest = url[m.end():]
+    # 2° giro dell'agente: una password con # / ? scritti così come sono (senza %23 ecc.) restava visibile.
+    # Se prima dell'ultima @ c'è un ":", tutto quello prima è utente:password, qualunque carattere contenga.
+    word = re.split(r"\s", rest, maxsplit=1)[0]
+    at = word.rfind("@")
+    if at >= 0 and ":" in word[:at] and not re.fullmatch(r"[^/?#@]*:\d+(/.*)?", word[:at]):
+        userinfo, after = word[:at], word[at + 1:] + rest[len(word):]
+        end = min([i for i in (after.find("/"), after.find("?"), after.find("#")) if i >= 0] or [len(after)])
+        user, _, pw = userinfo.partition(":")
+        return m.group(1), user, pw, after[:end], after[end:]
     end = min([i for i in (rest.find("/"), rest.find("?"), rest.find("#")) if i >= 0] or [len(rest)])
     auth, tail = rest[:end], rest[end:]
     if "@" not in auth:
@@ -157,12 +166,17 @@ def mask_text(text: str) -> str:
         line_end = text.find("\n", m.end())
         line_end = len(text) if line_end < 0 else line_end
         seg = text[m.end():line_end]
-        stops = [i for i in (seg.find("/"), seg.find("?"), seg.find("#")) if i >= 0]
-        auth = seg[:min(stops)] if stops else seg
-        at = auth.rfind("@")
-        if at < 0 or ":" not in auth[:at]:
+        # fino all'ultima @ della "parola" (prima di uno spazio): la password può contenere / ? # @ e anche spazi
+        word = re.split(r"\s", seg, maxsplit=1)[0]
+        at = word.rfind("@")
+        if at < 0:
+            # spazi nella password: cerca l'ultima @ della riga dopo un ":" (utente:pass word@host)
+            at = seg.rfind("@")
+            if at < 0 or ":" not in seg[:at] or "://" in seg[:at]:
+                continue
+        if ":" not in seg[:at]:
             continue
-        user = auth[:at].split(":", 1)[0]
+        user = seg[:at].split(":", 1)[0]
         out.append(text[pos:m.end()] + f"{user}:****")
         pos = m.end() + at
     out.append(text[pos:])

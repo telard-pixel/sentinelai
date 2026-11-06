@@ -48,17 +48,23 @@ class RotatingLog:
     def write(self, text):
         with self.lock:
             try:
-                if self.f.tell() > LOG_MAX:
+                if self.f.closed or self.f.tell() > LOG_MAX:
                     self.f.close()
-                    self.path.replace(self.path.with_suffix(".log.1"))
+                    try:
+                        self.path.replace(self.path.with_suffix(".log.1"))
+                    except OSError:
+                        pass    # file in uso (antivirus, lettura dall'app): si riprova alla prossima scrittura
                     self.f = open(self.path, "a", encoding="utf-8", buffering=1)
-            except OSError:
-                pass
-            return self.f.write(text)
+                return self.f.write(text)
+            except (OSError, ValueError):
+                return 0        # il registro non deve mai fermare il programma
 
     def flush(self):
         with self.lock:
-            self.f.flush()
+            try:
+                self.f.flush()
+            except (OSError, ValueError):
+                pass
 
     def isatty(self):
         return False
@@ -387,7 +393,7 @@ def main():
     cfg = load_config()
     if not single_instance():
         # Già acceso (anche se sta ancora caricando il modello): solo la finestra, nessun secondo server.
-        for _ in range(60):
+        for _ in range(240):   # fino a 2 minuti: su un PC lento il modello impiega un po' a caricarsi
             p = running_port()
             if p and health(p):
                 if "--minimizzato" not in args:
@@ -400,9 +406,10 @@ def main():
         port = next(p for p in range(port + 1, port + 50) if port_free(p))
     PORT_FILE.write_text(str(port))
     rete = bool(cfg.get("rete"))
-    if rete and not (cfg.get("password") or cfg.get("google_client_id")):
-        # Aperto alla rete senza login = chiunque in casa (o un ospite sul Wi-Fi) comanda le telecamere.
-        log('"rete": true ignorato: serve anche una "password" o il login con Google in config.json')
+    if rete and not cfg.get("password"):
+        # Aperto alla rete senza password = chiunque in casa (o un ospite sul Wi-Fi) comanda le telecamere.
+        # Il login con Google da solo non basta: dagli altri dispositivi Google rifiuta il ritorno (solo 127.0.0.1).
+        log('"rete": true ignorato: serve anche una "password" in config.json')
         rete = False
     host = "0.0.0.0" if rete else "127.0.0.1"
     log(f"avvio SentinelAI {VERSION} su {host}:{port}, dati in {DATA}")

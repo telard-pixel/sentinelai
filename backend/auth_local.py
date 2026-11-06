@@ -119,17 +119,19 @@ async def login(body: LoginIn, request: Request, response: Response):
     peer = request.client.host if request.client else "?"
     ip = (request.headers.get("x-real-ip") or peer) if os.environ.get("TRUST_PROXY") == "1" else peer
     now = time.time()
-    total = sum(1 for v in _fails.values() for t in v if now - t < 900)
-    if total >= 100:   # limite complessivo: niente tentativi infiniti anche cambiando indirizzo
-        raise HTTPException(429, "Troppi tentativi: riprova tra qualche minuto")
     if len(_fails) > 1000:   # pulizia: si tengono solo gli indirizzi con tentativi recenti
         for k in [k for k, v in _fails.items() if not v or now - v[-1] > 900]:
             _fails.pop(k, None)
     recent = [t for t in _fails.get(ip, []) if now - t < 900]
     if len(recent) >= 8:
         raise HTTPException(429, "Troppi tentativi: riprova tra qualche minuto")
-    if not _password() or not hmac.compare_digest(body.password.encode(), _password().encode()):
+    good = bool(_password()) and hmac.compare_digest(body.password.encode(), _password().encode())
+    if not good:
         _fails[ip] = recent + [now]
+        # Limite complessivo (niente tentativi infiniti cambiando indirizzo): vale solo per chi SBAGLIA,
+        # così chi ha la password giusta entra sempre (2° giro dell'agente di prova).
+        if sum(1 for v in _fails.values() for t in v if now - t < 900) >= 100:
+            raise HTTPException(429, "Troppi tentativi: riprova tra qualche minuto")
         raise HTTPException(401, "Password errata")
     _fails.pop(ip, None)
     token = make_token()
@@ -172,13 +174,20 @@ _pending: dict[str, dict] = {}
 
 
 def _callback_url(request: Request) -> str:
-    # Host è già controllato dal middleware (nomi ammessi): con la versione Windows è 127.0.0.1:porta,
-    # che Google accetta per i client "App desktop" senza doverlo registrare.
-    scheme = "https" if request.url.scheme == "https" else "http"
-    return f"{scheme}://{request.headers.get('host')}/api/auth/google/callback"
+    # Il nome viene da Host (già controllato dal middleware); la porta, senza un proxy davanti, è quella su cui
+    # ascolta davvero il server: chi chiama non può farla puntare a un'altra porta del PC (2° giro dell'agente).
+    from server import real_scheme
+    scheme = real_scheme(request.headers, request.url.scheme)
+    host = request.headers.get("host", "")
+    if os.environ.get("TRUST_PROXY") != "1":
+        name = host.rsplit(":", 1)[0] if not host.endswith("]") else host
+        port = (request.scope.get("server") or ("", 0))[1]
+        host = f"{name}:{port}" if port else name
+    return f"{scheme}://{host}/api/auth/google/callback"
 
 
 def _back(error: str = "", token: str = "") -> RedirectResponse:
+    # Solo codici fissi dopo il #: la pagina li traduce, così nessuno può far comparire un testo a piacere.
     frag = f"token={quote(token)}" if token else f"errore={quote(error)}"
     return RedirectResponse(f"/sign-in#{frag}", status_code=302)
 
@@ -191,13 +200,16 @@ async def google_start(request: Request):
     now = time.time()
     for k in [k for k, v in _pending.items() if v["exp"] < now]:
         _pending.pop(k, None)
-    if len(_pending) > 50:
+    ip = request.client.host if request.client else "?"
+    if sum(1 for v in _pending.values() if v.get("ip") == ip) >= 10:
         raise HTTPException(429, "Troppi accessi in corso: riprova tra qualche minuto")
+    while len(_pending) >= 200:   # 2° giro dell'agente: si scarta il più vecchio, non si blocca il login a tutti
+        _pending.pop(min(_pending, key=lambda k: _pending[k]["exp"]))
     state = secrets.token_urlsafe(24)
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
     redirect = _callback_url(request)
-    _pending[state] = {"verifier": verifier, "redirect": redirect, "exp": now + 600}
+    _pending[state] = {"verifier": verifier, "redirect": redirect, "exp": now + 600, "ip": ip}
     q = urlencode({"client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": "openid email profile",
                    "state": state, "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account"})
     return RedirectResponse(f"{GOOGLE_AUTH}?{q}", status_code=302)
@@ -208,9 +220,9 @@ async def google_callback(request: Request, state: str = "", code: str = "", err
     import httpx
     p = _pending.pop(state, None)
     if error:
-        return _back("Accesso con Google annullato")
+        return _back("annullato")
     if not p or p["exp"] < time.time() or not code:
-        return _back("Accesso scaduto o non valido: riprova")
+        return _back("scaduto")
     cid, secret, emails = _google()
     try:
         async with httpx.AsyncClient(timeout=20) as c:
@@ -218,18 +230,19 @@ async def google_callback(request: Request, state: str = "", code: str = "", err
                                                  "code_verifier": p["verifier"], "grant_type": "authorization_code",
                                                  "redirect_uri": p["redirect"]})
             if t.status_code != 200:
-                return _back("Google ha rifiutato l'accesso (controlla le impostazioni del client)")
+                return _back("rifiutato")
             u = await c.get(GOOGLE_USERINFO, headers={"Authorization": f"Bearer {t.json().get('access_token', '')}"})
             info = u.json() if u.status_code == 200 else {}
     except httpx.HTTPError:
-        return _back("Google non risponde: controlla la connessione a internet")
+        return _back("rete")
     email = str(info.get("email", "")).lower()
-    if not email or not info.get("email_verified"):
-        return _back("Indirizzo Google non verificato")
+    if not email or info.get("email_verified") is not True:
+        return _back("non_verificato")
     if email not in emails:
-        return _back(f"{email} non è tra gli account ammessi")
+        return _back("non_ammesso")
     token = make_token()
     resp = _back(token=token)
+    from server import real_scheme
     resp.set_cookie(COOKIE, token, max_age=TOKEN_DAYS * 86400, httponly=True, samesite="lax",
-                    secure=request.url.scheme == "https")
+                    secure=real_scheme(request.headers, request.url.scheme) == "https")
     return resp

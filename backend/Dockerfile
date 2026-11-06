@@ -9,4 +9,5 @@ RUN pip install -r requirements.txt
 RUN mkdir -p models && python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" && mv yolov8n.pt models/
 COPY *.py ./
 EXPOSE 8001
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001", "--ws-max-size", "4194304"]
+# --proxy-headers: lo schema (https dietro Tailscale) e l'IP veri arrivano da nginx, l'unico che raggiunge il backend.
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001", "--ws-max-size", "4194304", "--proxy-headers", "--forwarded-allow-ips", "*"]

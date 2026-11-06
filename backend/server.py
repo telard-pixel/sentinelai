@@ -115,6 +115,16 @@ def _netloc(value: str, scheme: str = "http") -> str:
     return f"{host}:{port}" if host else ""
 
 
+def real_scheme(headers, scheme: str) -> str:
+    """Schema vero della pagina: dietro il nostro proxy (Docker, TRUST_PROXY=1) è quello di X-Forwarded-Proto,
+    anche se uvicorn non è stato avviato con --proxy-headers (2° giro dell'agente di prova)."""
+    if os.environ.get("TRUST_PROXY") == "1":
+        fwd = (headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+        if fwd in ("http", "https"):
+            return fwd
+    return "https" if scheme in ("https", "wss") else "http"
+
+
 def request_allowed(headers, method: str = "GET", scheme: str = "http") -> Optional[str]:
     """None se va bene, altrimenti il motivo del rifiuto. Vale per HTTP e WebSocket.
 
@@ -122,6 +132,7 @@ def request_allowed(headers, method: str = "GET", scheme: str = "http") -> Optio
     (una pagina con DNS rebinding è "stessa origine" e la aggiunge a fetch) e aggirava tutto il controllo."""
     raw_host = headers.get("host", "")
     host = _hostname(raw_host)
+    scheme = real_scheme(headers, scheme)
     if ALLOWED_HOSTS and host not in ALLOWED_HOSTS:
         return "indirizzo non ammesso"
     origin = (headers.get("origin") or "").strip()
@@ -652,7 +663,7 @@ async def telegram_test():
 
 @public.websocket("/ws/stream")
 async def stream_ws(ws: WebSocket):
-    why = request_allowed({**ws.headers, "upgrade": "websocket"})
+    why = request_allowed({**ws.headers, "upgrade": "websocket"}, "GET", "https" if ws.url.scheme in ("wss", "https") else "http")
     if why:
         logger.warning("WebSocket rifiutato: %s (origin=%s)", why, ws.headers.get("origin"))
         await ws.close(code=4403)
@@ -708,10 +719,13 @@ async def stream_ws(ws: WebSocket):
                 if pump:
                     pump.cancel()
                 if camera.type in ("rtsp", "nvr"):
+                    # 06/11/2026 (agente di prova, 2° giro): lo "start" di una finestra NON accende più il
+                    # monitoraggio (una finestra rimasta indietro riaccendeva una telecamera appena fermata).
+                    # Si accende solo con Avvia (PUT monitor:true); qui, se è spenta, si risponde "stopped".
+                    if not camera.monitor:
+                        await ws.send_json({"type": "stopped"})
+                        continue
                     async with cam_lock(camera.id):
-                        if not camera.monitor:
-                            await db.cameras.update_one({"id": camera.id}, {"$set": {"monitor": True}})
-                            camera.monitor = True
                         worker = manager.ensure(camera, await load_settings())
                     queue = worker.attach()
                     st = worker.status

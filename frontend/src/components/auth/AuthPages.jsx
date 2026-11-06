@@ -36,6 +36,16 @@ const GoogleIcon = () => (
   </svg>
 );
 
+// Solo messaggi nostri: il codice arriva dopo il #, il testo no (nessuno può far comparire frasi a piacere).
+const GOOGLE_ERRORS = {
+  annullato: "Accesso con Google annullato.",
+  scaduto: "Accesso scaduto o non valido: riprova.",
+  rifiutato: "Google ha rifiutato l'accesso: controlla le impostazioni del client.",
+  rete: "Google non risponde: controlla la connessione a internet.",
+  non_verificato: "Indirizzo Google non verificato.",
+  non_ammesso: "Questo account Google non è tra quelli ammessi.",
+};
+
 export function SignInPage() {
   const { required, google, token, setToken } = useLocalAuth();
   const navigate = useNavigate();
@@ -48,7 +58,7 @@ export function SignInPage() {
     const h = new URLSearchParams(window.location.hash.slice(1));
     if (h.get("token") || h.get("errore")) window.history.replaceState(null, "", window.location.pathname);
     if (h.get("token")) { setToken(h.get("token")); navigate("/", { replace: true }); }
-    else if (h.get("errore")) setError(h.get("errore"));
+    else if (h.get("errore")) setError(GOOGLE_ERRORS[h.get("errore")] || "Accesso con Google non riuscito: riprova.");
     fetch(`${BACKEND}/api/auth/config`).then((r) => r.json()).then((c) => setHasPassword(!!c.password)).catch(() => {});
   }, [setToken, navigate]);
   if (!required || token) return <Navigate to="/" replace />;

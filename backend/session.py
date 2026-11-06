@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 
 HEAT_FLUSH_SECONDS = 15
 LINE_MARGIN = 0.015       # frazione dell'inquadratura: dentro questa fascia attorno alla linea non si cambia lato
-LINE_COOLDOWN = 1.5       # secondi prima che la stessa traccia possa riattraversare
+LINE_COOLDOWN = 0.4       # secondi prima che la stessa traccia possa riattraversare (i tremolii li filtra LINE_CONFIRM)
+LINE_CONFIRM = 3          # fotogrammi di fila sul lato nuovo per contare un passaggio
 ZONE_EXIT_GRACE = 1.5     # secondi fuori dalla zona prima di considerarla davvero uscita
 BACKGROUND_SECONDS = 60
 
@@ -197,15 +198,27 @@ class StreamSession:
             if abs(dist) < LINE_MARGIN:
                 continue
             side = 1 if dist > 0 else -1
-            if tr.side is not None and side != tr.side and within_segment(line, cx, cy) \
-                    and now - getattr(tr, "last_cross", -1e9) >= LINE_COOLDOWN:
+            if tr.side is None:
+                tr.side = side
+                continue
+            if side == tr.side:
+                tr.pending = 0
+                continue
+            # 2° giro dell'agente: con tremolii più ampi del margine contava ancora. Ora il lato nuovo deve
+            # durare LINE_CONFIRM fotogrammi di fila, e durante il cooldown il lato vecchio resta quello buono
+            # (così un ritorno indietro rapido viene contato, invece di perdersi).
+            tr.pending = getattr(tr, "pending", 0) + 1
+            if tr.pending < LINE_CONFIRM or now - getattr(tr, "last_cross", -1e9) < LINE_COOLDOWN:
+                continue
+            tr.pending = 0
+            tr.side = side
+            if within_segment(line, cx, cy):
                 direction = "IN" if (side > 0) != line["invert"] else "OUT"
                 self.counts["in" if direction == "IN" else "out"] += 1
                 tr.crossed = True
                 tr.last_cross = now
                 snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} {direction}")
                 events.append(await self.save_event("attraversamento", tr, direction, snap))
-            tr.side = side
         for tr in expired:
             self.zone_state.pop(tr.id, None)
             self.heat_seen.discard(tr.id)
