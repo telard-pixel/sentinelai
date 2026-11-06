@@ -25,6 +25,7 @@ users_router = APIRouter(prefix="/api")
 _fails: dict[str, list[float]] = {}
 _slow: dict[str, float] = {}          # ultimo tentativo per indirizzo quando il freno è attivo
 _good_ips: dict[str, float] = {}      # indirizzi da cui si è già entrati con la password giusta
+_pw_lock = asyncio.Lock()             # due cambi di password insieme: uno alla volta (5° giro dell'agente)
 
 
 # 06/11/2026: la password si può mettere, cambiare o togliere dall'app (Impostazioni). Si salva come impronta
@@ -263,6 +264,14 @@ class PasswordIn(BaseModel):
 
 @users_router.put("/auth/password")
 async def set_password(body: PasswordIn, request: Request, response: Response, member: dict = Depends(require_approved)):
+    async with _pw_lock:
+        # ricontrollo dentro il lucchetto: se un altro cambio è appena passato, questo gettone non vale più
+        if login_required() and not valid_token(_token_of(request)):
+            raise HTTPException(401, "Accesso richiesto")
+        return await _set_password(body, request, response)
+
+
+async def _set_password(body: PasswordIn, request: Request, response: Response):
     """Imposta, cambia o toglie (new vuota) la password dell'app. Se c'è già una password va scritta quella attuale.
     I gettoni dati prima smettono di valere; chi la cambia riceve subito un gettone nuovo e resta dentro."""
     if login_required():

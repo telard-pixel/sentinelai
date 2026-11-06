@@ -155,7 +155,9 @@ class StreamSession:
     async def _count_crossing(self, frame, tr, side, now, events, inside_segment):
         tr.pending = 0
         tr.side = side
-        tr.armed = side if abs(line_distance(self.camera.line.model_dump(), *tr.history[-1])) >= LINE_ARM else None
+        # dopo un passaggio il lato nuovo si arma già a LINE_STRONG: così chi entra, si ferma poco oltre e torna
+        # indietro viene contato anche al ritorno (5° giro dell'agente)
+        tr.armed = side if abs(line_distance(self.camera.line.model_dump(), *tr.history[-1])) >= LINE_STRONG else None
         if not inside_segment:
             return
         direction = "IN" if (side > 0) != self.camera.line.invert else "OUT"
@@ -251,6 +253,15 @@ class StreamSession:
                 continue
             await self._count_crossing(frame, tr, side, now, events, within_segment(line, cx, cy))
         for tr in expired:
+            # 5° giro dell'agente: chi COMPARE già vicino alla linea (porta accanto, linea vicino al bordo) non si
+            # armava mai e non veniva contato. Alla fine della traccia: se partenza e arrivo stanno da parti opposte,
+            # con uno spostamento netto di almeno 2×LINE_STRONG e almeno un estremo lontano (LINE_ARM), conta una volta.
+            if line["enabled"] and not tr.crossed and tr.hits >= LINE_CONFIRM:
+                d0, d1 = line_distance(line, *tr.first), line_distance(line, *tr.history[-1])
+                if d0 * d1 < 0 and abs(d1 - d0) >= 2 * LINE_STRONG and max(abs(d0), abs(d1)) >= LINE_ARM \
+                        and min(abs(d0), abs(d1)) >= LINE_MARGIN:
+                    await self._count_crossing(frame, tr, 1 if d1 > 0 else -1, now, events,
+                                               within_segment(line, *tr.history[-1]))
             self.zone_state.pop(tr.id, None)
             self.heat_seen.discard(tr.id)
             disp = math.hypot(tr.history[-1][0] - tr.first[0], tr.history[-1][1] - tr.first[1])
