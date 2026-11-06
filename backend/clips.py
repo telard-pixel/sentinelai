@@ -1,16 +1,22 @@
 import asyncio
 import os
+import re
 import subprocess
 import tempfile
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import cv2
 import numpy as np
 
+import logging
+
 import telegram_bot
 from detection import encode_jpeg
+
+logger = logging.getLogger("clips")
 
 MAX_CLIP_SECONDS = 30
 _SENDING: set = set()   # invii a Telegram in corso (riferimenti tenuti per non perderli)
@@ -53,6 +59,68 @@ def _encode_opencv(frames, fps, path):
                 vw.write(cv2.resize(img, (w, h)) if img.shape[1] != w or img.shape[0] != h else img)
     finally:
         vw.release()
+
+
+# ---------------------------------------------------------------- cartella dei video (1.0.5)
+# Prima le clip stavano DENTRO il database (non si vedevano da Esplora file e il database cresceva).
+# Ora sono file .mp4 in <cartella>/<AAAA-MM-GG>/<telecamera>_<HHMMSS>_<id>.mp4.
+
+def default_clips_dir() -> Path:
+    return Path(os.environ.get("SENTINEL_CLIPS_DIR") or Path(os.environ.get("DATA_DIR", ".")) / "clip").resolve()
+
+
+def check_folder(folder) -> str | None:
+    """None se nella cartella si può scrivere (la crea se manca), altrimenti il motivo."""
+    try:
+        p = Path(folder)
+        if not p.is_absolute():
+            return "serve un percorso completo (es. D:\\Video\\SentinelAI)"
+        p.mkdir(parents=True, exist_ok=True)
+        test = p / f".prova-scrittura-{uuid.uuid4().hex[:6]}"
+        test.write_bytes(b"ok")
+        test.unlink()
+        return None
+    except OSError as exc:
+        return f"non si può scrivere ({exc.strerror or exc})"
+
+
+def clips_dir(settings) -> tuple[Path | None, str | None]:
+    """Cartella da usare adesso e un avviso se quella scelta non è disponibile (NAS spento, chiavetta tolta...)."""
+    want = (getattr(settings, "clips_folder", "") or "").strip()
+    if want:
+        err = check_folder(want)
+        if not err:
+            return Path(want), None
+        warn = f"La cartella scelta ({want}) non è disponibile: {err}. Uso quella predefinita."
+    else:
+        warn = None
+    d = default_clips_dir()
+    err = check_folder(d)
+    if err:
+        return None, f"Nessuna cartella per i video disponibile ({err}): le clip restano nel database."
+    return d, warn
+
+
+def _safe(name: str) -> str:
+    return re.sub(r"[^\w\- ]+", "_", name or "").strip()[:40] or "telecamera"
+
+
+def save_clip_file(settings, data: bytes, camera_name: str, clip_id: str, wall_utc: datetime, tz_offset: int):
+    """Scrive la clip su file. Restituisce (percorso, avviso); percorso None = resta nel database."""
+    folder, warn = clips_dir(settings)
+    if folder is None:
+        return None, warn
+    local = wall_utc - timedelta(minutes=tz_offset)
+    day = folder / local.strftime("%Y-%m-%d")
+    try:
+        day.mkdir(parents=True, exist_ok=True)
+        path = day / f"{_safe(camera_name)}_{local.strftime('%H%M%S')}_{clip_id[:6]}.mp4"
+        tmp = path.with_suffix(".mp4.tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+        return path, warn
+    except OSError as exc:
+        return None, f"Video non salvato nella cartella ({exc}): resta nel database."
 
 
 def encode_mp4(frames):
@@ -105,7 +173,8 @@ class ClipRecorder:
         cid = str(uuid.uuid4())
         frames = list(self.buffer)
         start = frames[0][0] if frames else now
-        self.active = {"id": cid, "frames": frames, "start": start, "until": now + s.clip_post_seconds, "events": [event_id]}
+        self.active = {"id": cid, "frames": frames, "start": start, "until": now + s.clip_post_seconds, "events": [event_id],
+                       "wall": datetime.now(timezone.utc) - timedelta(seconds=max(0.0, now - start))}
         await self.db.clips.insert_one({"id": cid, "status": "recording", "camera_id": self.camera.id, "camera_name": self.camera.name,
                                         "event_ids": [event_id], "timestamp": datetime.now(timezone.utc).isoformat()})
         return cid
@@ -134,8 +203,18 @@ class ClipRecorder:
         try:
             data, duration = await asyncio.to_thread(encode_mp4, rec["frames"])
             status = "ready" if data else "failed"
-            await self.db.clips.update_one({"id": rec["id"]}, {"$set": {"status": status, "data": data, "duration": duration,
-                                                                         "frames": len(rec["frames"]), "size": len(data)}})
+            fields = {"status": status, "duration": duration, "frames": len(rec["frames"]), "size": len(data)}
+            path = None
+            if data:
+                path, warn = await asyncio.to_thread(save_clip_file, self.settings, data, self.camera.name, rec["id"],
+                                                     rec.get("wall") or datetime.now(timezone.utc), self.tz_offset)
+                if warn:
+                    logger.warning("[%s] %s", self.camera.name, warn)
+            if path:
+                fields["file"] = str(path)
+            else:
+                fields["data"] = data        # nessuna cartella utilizzabile: come prima, nel database
+            await self.db.clips.update_one({"id": rec["id"]}, {"$set": fields})
             if data:
                 # 06/11/2026 (agente di prova): l'invio a Telegram (fino a minuti) non deve far aspettare
                 # Ferma, la modifica della telecamera o l'uscita dal programma.

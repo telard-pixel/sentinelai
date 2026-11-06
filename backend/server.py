@@ -21,10 +21,11 @@ import numpy as np
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
+import clips as clips_mod
 import telegram_bot
 from auth_local import require_approved, users_router, ws_member
 from detection import COCO_IT, category_of, detector
@@ -247,6 +248,9 @@ async def get_settings():
 
 @api.put("/settings", response_model=Settings)
 async def put_settings(s: Settings):
+    # La cartella dei video si cambia solo con PUT /storage/folder (controllata): il Salva generale delle
+    # Impostazioni manda i valori letti all'apertura e rimetterebbe quella vecchia.
+    s.clips_folder = (await load_settings()).clips_folder
     await db.settings.replace_one({"_id": "global"}, s.model_dump(), upsert=True)
     manager.reload_settings(s)
     return s
@@ -499,10 +503,16 @@ async def clip_meta(clip_id: str):
 
 @api.get("/clips/{clip_id}/video")
 async def clip_video(clip_id: str, request: Request, download: bool = False):
-    doc = await db.clips.find_one({"id": clip_id, "status": "ready"}, {"_id": 0, "data": 1, "timestamp": 1})
-    if not doc or not doc.get("data"):
+    doc = await db.clips.find_one({"id": clip_id, "status": "ready"}, {"_id": 0, "data": 1, "file": 1, "timestamp": 1})
+    if not doc or not (doc.get("data") or doc.get("file")):
         raise HTTPException(404, "Clip non disponibile")
-    data = bytes(doc["data"])
+    if doc.get("file"):
+        try:
+            data = await asyncio.to_thread(Path(doc["file"]).read_bytes)
+        except OSError:
+            raise HTTPException(404, "Il file del video non c'è più (cartella spostata, scollegata o file cancellato)")
+    else:
+        data = bytes(doc["data"])
     headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=86400"}
     if download:
         stamp = datetime.fromisoformat(doc["timestamp"]).strftime("%Y%m%d_%H%M%S")
@@ -525,6 +535,9 @@ async def clip_video(clip_id: str, request: Request, download: bool = False):
 
 @api.delete("/clips/{clip_id}")
 async def delete_clip(clip_id: str):
+    doc = await db.clips.find_one({"id": clip_id}, {"_id": 0, "file": 1})
+    if doc and doc.get("file"):
+        await asyncio.to_thread(_remove_file, doc["file"])
     r = await db.clips.delete_one({"id": clip_id})
     if not r.deleted_count:
         raise HTTPException(404, "Clip non trovata")
@@ -540,9 +553,100 @@ async def cleanup_old(days: int) -> dict:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     ev = await db.events.delete_many({"timestamp": {"$lt": cutoff}})
     sn = await db.snapshots.delete_many({"timestamp": {"$lt": cutoff}})
+    async for d in db.clips.find({"timestamp": {"$lt": cutoff}, "file": {"$ne": None}}, {"_id": 0, "file": 1}):
+        await asyncio.to_thread(_remove_file, d["file"])
     cl = await db.clips.delete_many({"timestamp": {"$lt": cutoff}})
     await db.meta.update_one({"_id": "storage"}, {"$set": {"last_cleanup": datetime.now(timezone.utc).isoformat()}}, upsert=True)
     return {"events": ev.deleted_count, "snapshots": sn.deleted_count, "clips": cl.deleted_count}
+
+
+def _remove_file(path: str):
+    """Cancella il file di una clip (e la cartella del giorno se resta vuota). Mai errori verso l'utente."""
+    try:
+        f = Path(path)
+        if f.suffix.lower() != ".mp4":
+            return
+        f.unlink(missing_ok=True)
+        try:
+            f.parent.rmdir()          # solo se vuota
+        except OSError:
+            pass
+    except OSError as exc:
+        logger.warning("clip: file non cancellato %s: %s", path, exc)
+
+
+class FolderBody(BaseModel):
+    folder: str = Field("", max_length=400)
+
+
+@api.put("/storage/folder")
+async def set_clips_folder(body: FolderBody):
+    """Sceglie la cartella dei video ("" = predefinita). Le clip nuove vanno lì; le vecchie restano dove sono."""
+    folder = body.folder.strip()
+    if folder:
+        err = await asyncio.to_thread(clips_mod.check_folder, folder)
+        if err:
+            raise HTTPException(422, f"Cartella dei video: {err}")
+    s = await load_settings()
+    s.clips_folder = folder
+    await db.settings.replace_one({"_id": "global"}, s.model_dump(), upsert=True)
+    manager.reload_settings(s)
+    return await storage()
+
+
+@api.post("/storage/move-clips")
+async def move_clips_here():
+    """Porta nella cartella in uso le clip ancora nel database e quelle salvate in altre cartelle."""
+    s = await load_settings()
+    folder, warn = await asyncio.to_thread(clips_mod.clips_dir, s)
+    if folder is None:
+        raise HTTPException(409, warn or "Nessuna cartella disponibile")
+    moved = failed = 0
+    docs = await db.clips.find({"status": "ready"}, {"_id": 0, "id": 1, "file": 1, "camera_name": 1, "timestamp": 1}).to_list(100000)
+    for d in docs:
+        cur = d.get("file")
+        if cur and Path(cur).parent.parent == folder:
+            continue
+        try:
+            if cur:
+                data = await asyncio.to_thread(Path(cur).read_bytes)
+            else:
+                full = await db.clips.find_one({"id": d["id"]}, {"_id": 0, "data": 1})
+                data = bytes((full or {}).get("data") or b"")
+            if not data:
+                failed += 1
+                continue
+            wall = datetime.fromisoformat(d["timestamp"])
+            path, _ = await asyncio.to_thread(clips_mod.save_clip_file, s, data, d.get("camera_name") or "telecamera", d["id"],
+                                              wall, local_tz_offset_now())
+            if not path:
+                failed += 1
+                continue
+            await db.clips.update_one({"id": d["id"]}, {"$set": {"file": str(path)}, "$unset": {"data": ""}})
+            if cur:
+                await asyncio.to_thread(_remove_file, cur)
+            moved += 1
+        except (OSError, ValueError) as exc:
+            logger.warning("spostamento clip %s: %s", d.get("id"), exc)
+            failed += 1
+    if moved:
+        await asyncio.to_thread(_compact_db)
+    return {"moved": moved, "failed": failed, **(await storage())}
+
+
+def _compact_db():
+    """Dopo aver tolto i video dal database lo si ricompatta (sennò il file resta grande)."""
+    try:
+        compact = getattr(db, "compact", None)
+        if compact:
+            compact()
+    except Exception as exc:
+        logger.warning("ricompattazione database: %s", exc)
+
+
+def local_tz_offset_now() -> int:
+    from session import local_tz_offset
+    return local_tz_offset()
 
 
 @api.get("/storage")
@@ -553,8 +657,21 @@ async def storage():
         logger.warning("dbstats non disponibile: %s", exc)
         st = {}
     meta = await db.meta.find_one({"_id": "storage"}) or {}
+    s = await load_settings()
+    folder, warn = await asyncio.to_thread(clips_mod.clips_dir, s)
+    files_mb, in_db, elsewhere = 0, 0, 0
+    async for d in db.clips.find({"status": "ready"}, {"_id": 0, "file": 1, "size": 1}):
+        if d.get("file"):
+            files_mb += d.get("size") or 0
+            if folder is None or Path(d["file"]).parent.parent != folder:
+                elsewhere += 1
+        else:
+            in_db += 1
     return {"events": await db.events.count_documents({}), "snapshots": await db.snapshots.count_documents({}),
             "clips": await db.clips.count_documents({}),
+            "clips_folder": str(folder) if folder else None, "clips_folder_chosen": s.clips_folder,
+            "clips_folder_default": str(clips_mod.default_clips_dir()), "clips_folder_warning": warn,
+            "clips_files_mb": round(files_mb / 1048576, 1), "clips_in_db": in_db, "clips_elsewhere": elsewhere,
             "size_mb": round((st.get("dataSize", 0) + st.get("indexSize", 0)) / 1048576, 1),
             "last_cleanup": meta.get("last_cleanup")}
 

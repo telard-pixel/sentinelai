@@ -48,7 +48,7 @@ MOTION_RATIO = 0.0015     # frazione dei punti cambiati per dire "movimento" (ci
 # una persona ferma in zona, persa per 3 s, diventava "cosa ferma" e la sosta non scattava).
 STATIC_LEARN = 300
 STATIC_LEARN_PERSON = 1800   # per le persone 30 minuti: di notte (IR) una persona vera può restare sotto 0,6
-STATIC_FORGET = 900       # un punto fisso non più visto da 15 minuti si dimentica
+STATIC_FORGET = 3600      # un punto fisso non più visto da 1 ora si dimentica (più dei 30 min per impararlo)
 
 
 def local_tz_offset() -> int:
@@ -338,7 +338,7 @@ class StreamSession:
             # 5° giro dell'agente: chi COMPARE già vicino alla linea (porta accanto, linea vicino al bordo) non si
             # armava mai e non veniva contato. Alla fine della traccia: se partenza e arrivo stanno da parti opposte,
             # con uno spostamento netto di almeno 2×LINE_STRONG e almeno un estremo lontano (LINE_ARM), conta una volta.
-            if line["enabled"] and not tr.crossed and tr.hits >= LINE_CONFIRM:
+            if line["enabled"] and not tr.crossed and not tr.inherited_crossed and tr.hits >= LINE_CONFIRM:
                 d0, d1 = line_distance(line, *tr.first), line_distance(line, *tr.history[-1])
                 if d0 * d1 < 0 and abs(d1 - d0) >= 2 * LINE_STRONG and max(abs(d0), abs(d1)) >= LINE_ARM \
                         and min(abs(d0), abs(d1)) >= LINE_MARGIN:

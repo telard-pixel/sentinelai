@@ -157,10 +157,46 @@ class LoginIn(BaseModel):
     password: str
 
 
+def _lock_file() -> Path:
+    return _data_file(".chiedi_a_ogni_apertura")
+
+
+def lock_on_open() -> bool:
+    """1.0.5: "Chiedi la password a ogni apertura" (vale solo se c'è una password)."""
+    return login_required() and _lock_file().exists()
+
+
 @users_router.get("/auth/config")
 async def auth_config():
     return {"password_required": login_required(), "password": login_required(),
-            "password_from_env": bool(os.environ.get("APP_PASSWORD")) and not _stored_hash()}
+            "password_from_env": bool(os.environ.get("APP_PASSWORD")) and not _stored_hash(),
+            "lock_on_open": lock_on_open()}
+
+
+class LockIn(BaseModel):
+    enabled: bool
+
+
+@users_router.put("/auth/lock-on-open")
+async def set_lock_on_open(body: LockIn, member: dict = Depends(require_approved)):
+    if body.enabled and not login_required():
+        raise HTTPException(409, "Prima imposta una password")
+    f = _lock_file()
+    try:
+        if body.enabled:
+            f.write_text("1")
+        else:
+            f.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(500, f"Impostazione non salvata: {exc}")
+    return {"lock_on_open": lock_on_open()}
+
+
+@users_router.post("/auth/lock")
+async def lock(response: Response):
+    """Chiude la sessione di QUESTA finestra (toglie il cookie) senza invalidare gli altri dispositivi."""
+    response.delete_cookie(COOKIE)
+    return {"ok": True}
 
 
 def _client_ip(request: Request) -> str:

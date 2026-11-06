@@ -34,7 +34,7 @@ export default function StorageSection({ days, onDays }) {
         </Select>
       </div>
       <div className="grid grid-cols-4 gap-2 font-mono text-xs">
-        {[["Eventi", data?.events], ["Screenshot", data?.snapshots], ["Clip", data?.clips], ["Spazio", data ? `${data.size_mb} MB` : "—"]].map(([k, v]) => (
+        {[["Eventi", data?.events], ["Screenshot", data?.snapshots], ["Clip", data?.clips], ["Spazio", data ? `${Math.round((data.size_mb + (data.clips_files_mb || 0)) * 10) / 10} MB` : "—"]].map(([k, v]) => (
           <div key={k} className="rounded border border-white/5 bg-black/30 p-2" data-testid={`storage-${k.toLowerCase()}`}>
             <div className="text-[9px] uppercase tracking-widest text-gray-500">{k}</div><div className="mt-1 text-gray-100">{v ?? "—"}</div>
           </div>

@@ -9,6 +9,7 @@ import ThemeSelector from "@/components/ThemeSelector";
 import UsersSection from "@/components/UsersSection";
 import LogSection from "@/components/LogSection";
 import PasswordSection from "@/components/PasswordSection";
+import ClipsFolderSection from "@/components/ClipsFolderSection";
 import { Switch } from "@/components/ui/switch";
 
 function SliderRow({ testid, label, value, min, max, step, onChange, fmt }) {
@@ -54,6 +55,7 @@ export default function SettingsSheet({ open, onOpenChange, settings, onSave }) 
               </>
             )}
           </div>
+          <ClipsFolderSection />
           <p className="font-mono text-[11px] uppercase tracking-wider text-gray-400">Motore AI</p>
           <SliderRow testid="confidence-slider" label="Soglia confidenza" value={d.conf} min={0.1} max={0.95} step={0.05} fmt={(v) => `${Math.round(v * 100)}%`} onChange={(v) => setD({ ...d, conf: v })} />
           <SliderRow testid="iou-slider" label="Soglia IOU (sovrapposizione)" value={d.iou} min={0.1} max={0.9} step={0.05} fmt={(v) => v.toFixed(2)} onChange={(v) => setD({ ...d, iou: v })} />

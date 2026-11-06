@@ -228,6 +228,7 @@ class Track:
         self.snap = None
         self.snap_conf = 0.0
         self.crossed = False
+        self.inherited_crossed = False
 
     def inherit(self, old):
         """Stessa cosa ripresa dopo una breve perdita: la nuova traccia ne eredita la storia di movimento e lo
@@ -235,9 +236,13 @@ class Track:
         due volte). Lo spostamento per transiti e bilancio della linea riparte dall'ultimo punto visto."""
         self.first = old.history[-1]
         self.born, self.first_points = old.born, list(old.first_points)
-        for k in ("crossed", "side", "armed", "last_cross", "pending"):
+        for k in ("side", "armed", "last_cross", "pending"):
             if hasattr(old, k):
                 setattr(self, k, getattr(old, k))
+        # Il "già passato la linea" ereditato serve solo a non ricontare il bilancio di fine traccia; il transito
+        # resta della traccia nuova (3° giro agente 104: una persona diversa uscita dalla stessa porta perdeva
+        # il suo transito).
+        self.inherited_crossed = old.crossed or getattr(old, "inherited_crossed", False)
         self.moved, self.max_conf = old.moved, max(self.max_conf, old.max_conf)
         self.sure_hits += old.sure_hits
         self.fixed = old.fixed and not self.moved and self.sure_hits < SURE_HITS

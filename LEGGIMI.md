@@ -63,6 +63,13 @@ già presente in Windows 10/11, dentro il programma; se manca si usa Edge) e res
 all'orologio: *Apri SentinelAI*, *Avvia con Windows*, *Cartella dei dati*, *Esci*. La X chiude solo la finestra:
 le telecamere restano controllate finché non scegli *Esci*.
 
+Video delle clip (1.0.5): file `.mp4` nella cartella **Video\SentinelAI** dell'utente (una sottocartella per giorno),
+oppure in quella scelta in *Impostazioni → Dove salvo i video* (anche disco esterno o cartella di rete; se non è
+raggiungibile si usa la predefinita e compare un avviso). *Porta qui tutti i video* sposta anche quelli delle versioni
+precedenti, che stavano dentro il database. Password: *Chiedi la password ogni volta che apri l'app* la richiede
+a ogni apertura della finestra. CPU: l'AI gira solo quando c'è movimento o sta seguendo qualcosa (a scena ferma un
+controllo ogni 3 s).
+
 Differenze rispetto alla versione Docker, solo per essere un programma leggero:
 - database in un file SQLite (`backend/docstore.py`, stessa interfaccia di MongoDB) invece del server MongoDB;
 - YOLO11s in formato ONNX con OpenCV invece di PyTorch (installer molto più leggero: niente PyTorch da oltre 1 GB);

@@ -118,12 +118,36 @@ def lan_addresses() -> list:
         return []
 
 
+def videos_folder() -> Path:
+    """Cartella Video dell'utente (anche se spostata su un altro disco), poi \\SentinelAI."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            import uuid as _uuid
+            from ctypes import wintypes
+
+            class GUID(ctypes.Structure):
+                _fields_ = [("d1", wintypes.DWORD), ("d2", wintypes.WORD), ("d3", wintypes.WORD), ("d4", ctypes.c_ubyte * 8)]
+            u = _uuid.UUID("18989B1D-99B5-455B-841C-AB7C74E4DDFC")      # FOLDERID_Videos
+            g = GUID(u.fields[0], u.fields[1], u.fields[2], (ctypes.c_ubyte * 8)(*u.bytes[8:]))
+            out = ctypes.c_wchar_p()
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None, ctypes.byref(out)) == 0:
+                path = out.value
+                ctypes.windll.ole32.CoTaskMemFree(out)
+                if path:
+                    return Path(path) / APP
+        except Exception:
+            pass
+    return Path.home() / "Videos" / APP
+
+
 def make_app(data_dir: Path, password: str, rete: bool = False):
     # Solo questi nomi possono chiamare il server: un sito che si finge 127.0.0.1 (DNS rebinding) viene rifiutato.
     hosts = ["127.0.0.1", "localhost"] + (lan_addresses() if rete else [])
     os.environ.update(MONGO_URL=f"sqlite:///{data_dir.as_posix()}", DB_NAME="sentinelai", DATA_DIR=str(data_dir),
                       APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="",
-                      ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG), SENTINEL_RETE="1" if rete else "0")
+                      ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG), SENTINEL_RETE="1" if rete else "0",
+                      SENTINEL_CLIPS_DIR=str(videos_folder()))
     sys.path.insert(0, str(BACKEND))
     import server  # noqa: E402  (legge le variabili qui sopra)
     from fastapi.staticfiles import StaticFiles
@@ -258,6 +282,28 @@ def set_autostart(on: bool):
 SHOW_EVENT = "Local\\SentinelAI-mostra"   # il secondo avvio lo segnala: la finestra torna davanti
 
 
+class DesktopApi:
+    """Comandi che la pagina può chiedere al programma (window.pywebview.api.*), solo nella finestra propria."""
+
+    def __init__(self, owner):
+        self._owner = owner
+
+    def choose_folder(self, current=""):
+        import webview
+        start = current if current and Path(current).is_dir() else str(videos_folder().parent)
+        res = self._owner.window.create_file_dialog(webview.FOLDER_DIALOG, directory=start)
+        return res[0] if res else ""
+
+    def open_folder(self, path=""):
+        p = Path(path or videos_folder())
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(p))  # noqa: S606 (solo Windows)
+            return True
+        except OSError:
+            return False
+
+
 class AppWindow:
     """Finestra WebView2 di SentinelAI. webview.start() deve girare nel thread principale."""
 
@@ -285,7 +331,8 @@ class AppWindow:
             pass
         self.window = webview.create_window(
             "SentinelAI", f"http://127.0.0.1:{self.port}/", width=w, height=h, x=x, y=y,
-            min_size=(min(900, w), min(600, h)), hidden=hidden, background_color="#090D14", text_select=True)
+            min_size=(min(900, w), min(600, h)), hidden=hidden, background_color="#090D14", text_select=True,
+            js_api=DesktopApi(self))
         self.window.events.closing += self.on_closing
         self.window.events.loaded += lambda: self.ready.set()
         self.window.events.minimized += lambda: setattr(self, "minimized", True)
@@ -296,7 +343,14 @@ class AppWindow:
         if self.quitting or self.tray is None or time.monotonic() - self.session_ending < 20:
             return True      # senza icona vicino all'orologio la X chiude davvero (sennò non si spegnerebbe più)
         # La X nasconde e basta: il server e le telecamere restano accesi (come chiudere Edge prima).
-        threading.Thread(target=self.window.hide, daemon=True).start()
+        # Con "Chiedi la password a ogni apertura" la pagina si richiude prima di sparire (1.0.5).
+        def hide():
+            try:
+                self.window.evaluate_js("window.__sentinelLock && window.__sentinelLock()")
+            except Exception:
+                pass
+            self.window.hide()
+        threading.Thread(target=hide, daemon=True).start()
         if not self.close_hint_done and self.tray is not None:
             self.close_hint_done = True
             try:

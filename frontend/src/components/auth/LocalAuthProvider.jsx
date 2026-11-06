@@ -4,6 +4,11 @@ import SplashScreen from "@/components/SplashScreen";
 
 // Accesso locale con password unica (05/11/2026), al posto di Clerk.
 const KEY = "sentinelToken";
+// 1.0.5 "Chiedi la password a ogni apertura": il segno "sbloccata" vive solo finché la finestra è aperta
+// (sessionStorage). All'avvio senza segno, o quando il programma nasconde la finestra (X), si richiude.
+const UNLOCKED = "sentinelUnlocked";
+const mark = (on) => { try { on ? sessionStorage.setItem(UNLOCKED, "1") : sessionStorage.removeItem(UNLOCKED); } catch {} };
+const unlocked = () => { try { return sessionStorage.getItem(UNLOCKED) === "1"; } catch { return false; } };
 const AuthContext = createContext(null);
 export const useLocalAuth = () => useContext(AuthContext);
 
@@ -18,8 +23,21 @@ export default function LocalAuthProvider({ children }) {
 
   const setToken = useCallback((t) => {
     try { t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY); } catch {}
+    mark(!!t);
     setTokenState(t || "");
   }, []);
+
+  const lockNow = useCallback(async () => {
+    mark(false);
+    try { await fetch(`${BACKEND}/api/auth/lock`, { method: "POST", credentials: "include" }); } catch {}
+    setToken("");
+  }, [setToken]);
+
+  // il programma per Windows lo chiama quando nasconde la finestra con la X
+  useEffect(() => {
+    window.__sentinelLock = async () => { if (config?.lock_on_open && config?.password_required) await lockNow(); };
+    return () => { delete window.__sentinelLock; };
+  }, [config, lockNow]);
 
   useEffect(() => { setTokenGetter(() => token || null); }, [token]);
 
@@ -42,7 +60,16 @@ export default function LocalAuthProvider({ children }) {
     const load = async (attempt = 0) => {
       try {
         const r = await fetch(`${BACKEND}/api/auth/config`);
-        if (r.ok) return cancelled || setConfig(await r.json());
+        if (r.ok) {
+          const cfg = await r.json();
+          if (cfg.lock_on_open && cfg.password_required && !unlocked()) {
+            // finestra appena aperta: si richiede la password anche se c'è un gettone salvato
+            try { await fetch(`${BACKEND}/api/auth/lock`, { method: "POST", credentials: "include" }); } catch {}
+            try { localStorage.removeItem(KEY); } catch {}
+            setTokenState("");
+          }
+          return cancelled || setConfig(cfg);
+        }
       } catch {}
       if (cancelled) return;
       if (attempt >= 40) return setFailed(true);
@@ -61,7 +88,7 @@ export default function LocalAuthProvider({ children }) {
   return (
     <>
       {config && (
-        <AuthContext.Provider value={{ required: config.password_required, fromEnv: !!config.password_from_env, token, setToken, logout, refreshConfig }}>
+        <AuthContext.Provider value={{ required: config.password_required, fromEnv: !!config.password_from_env, lockOnOpen: !!config.lock_on_open, token, setToken, logout, refreshConfig, markUnlocked: () => mark(true) }}>
           {children}
         </AuthContext.Provider>
       )}

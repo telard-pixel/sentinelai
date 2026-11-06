@@ -367,6 +367,12 @@ class Database:
         size = sum(os.path.getsize(p) for p in (self.path, self.path + "-wal") if os.path.exists(p))
         return {"dataSize": size, "indexSize": 0}
 
+    def compact(self):
+        """Ricompatta il file (VACUUM): dopo aver tolto i video dal database lo spazio torna libero."""
+        with self._lock:
+            self._conn.execute("VACUUM")
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     def close(self):
         with self._lock:
             try:

@@ -227,6 +227,8 @@ class Settings(BaseModel):
     telegram_send_photo: bool = True
     telegram_send_clip: bool = True
     retention_days: int = Field(30, ge=0, le=3650)
+    # 1.0.5: cartella dei video delle clip ("" = predefinita: Video\SentinelAI sul PC, DATA_DIR/clip in Docker)
+    clips_folder: str = Field("", max_length=400)
 
 
 class Event(BaseModel):
