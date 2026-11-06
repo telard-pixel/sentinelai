@@ -1,0 +1,79 @@
+"""SentinelAI come servizio Linux (CT Proxmox): stesso motore della versione Windows (YOLO11s ONNX + OpenCV + SQLite),
+niente finestra: si apre dal browser su http://<indirizzo>:<porta>.
+
+Uso:  python3 sentinel_server.py [--porta 8765] [--dati /var/lib/SentinelAI]
+Verso la rete si apre SOLO se c'è una password (Impostazioni → Password di accesso, oppure imposta-password.py);
+senza password resta su 127.0.0.1, come la versione Windows.
+"""
+import argparse
+import os
+import re
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent.parent
+
+
+def lan_ipv4() -> list:
+    """Indirizzi IPv4 veri della macchina (nel CT il nome host spesso risolve solo a 127.0.1.1)."""
+    out = set()
+    try:
+        txt = subprocess.run(["ip", "-4", "-o", "addr", "show", "scope", "global"], capture_output=True, text=True, timeout=5).stdout
+        out |= {ln.split()[3].split("/")[0] for ln in txt.splitlines() if len(ln.split()) > 3}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))     # nessun pacchetto parte: serve solo a sapere l'indirizzo d'uscita
+            out.add(s.getsockname()[0])
+    except OSError:
+        pass
+    host = socket.gethostname().lower()
+    extra = [h.strip().lower() for h in os.environ.get("SENTINEL_NOMI", "").split(",") if h.strip()]
+    return sorted(out | {host, f"{host}.local", f"{host}.lan"} | set(extra))
+
+
+def password_ok(data: Path) -> bool:
+    """Password impostata e valida (un file vuoto o rovinato NON conta: si resta su 127.0.0.1)."""
+    try:
+        return bool(re.fullmatch(r"scrypt\$[0-9a-f]{32}\$[0-9a-f]{64}", (data / ".app_password").read_text().strip()))
+    except OSError:
+        return False
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--porta", type=int, default=int(os.environ.get("SENTINEL_PORTA", 8765)))
+    ap.add_argument("--dati", default=os.environ.get("SENTINEL_DATI", "/var/lib/SentinelAI"))
+    a = ap.parse_args()
+    data = Path(a.dati)
+    data.mkdir(parents=True, exist_ok=True)
+    # sentinel_desktop calcola DATA da LOCALAPPDATA all'import: lo puntiamo qui (niente ~/AppData su Linux).
+    os.environ["LOCALAPPDATA"] = str(data.parent)
+    sys.path.insert(0, str(BASE / "desktop"))
+    import sentinel_desktop as d
+
+    try:
+        d.VERSION = (BASE / "VERSIONE").read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    d.MODELS = Path(os.environ.get("SENTINEL_MODELLI", BASE / "models"))
+    d.lan_addresses = lan_ipv4
+    clips = Path(os.environ.get("SENTINEL_VIDEO", data / "video"))
+    d.videos_folder = lambda: clips      # cartella predefinita dei video; dall'app se ne può scegliere un'altra
+    os.environ["SENTINEL_LOG"] = str(data / "sentinelai.log")
+
+    rete = password_ok(data)
+    host = "0.0.0.0" if rete else "127.0.0.1"
+    if not rete:
+        d.log("nessuna password: resto su 127.0.0.1 (impostala con imposta-password.py, poi riavvia il servizio)")
+    app = d.make_app(data, "", rete)
+    d.log(f"avvio SentinelAI {d.VERSION} su {host}:{a.porta}, dati in {data}, nomi ammessi: {', '.join(lan_ipv4())}")
+    import uvicorn
+    uvicorn.run(app, host=host, port=a.porta, log_level="warning", ws_max_size=4 * 1024 * 1024)
+
+
+if __name__ == "__main__":
+    main()

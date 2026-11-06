@@ -107,3 +107,15 @@ chi è già entrato da quel dispositivo non viene mai frenato.
 **Password dimenticata o file rovinato** (es. dopo un calo di corrente): chiudi SentinelAI (icona → Esci), cancella
 `%LOCALAPPDATA%\SentinelAI\.app_password` e riapri: l'app parte senza password e la reimposti. Un file vuoto o rovinato
 non apre MAI l'app senza password: la blocca e lo scrive nel registro.
+
+## Versione Linux (CT Proxmox) — `linux/`
+
+Stesso motore della versione Windows (YOLO11s ONNX + OpenCV + SQLite), senza finestra: si apre dal browser su
+`http://<indirizzo>:8765`. Installata il 06/11/2026 nel CT 111 "sentinelai" (Debian 12, 192.168.0.145).
+
+- Programma in `/opt/sentinelai` (backend, desktop/sentinel_desktop.py, frontend/build, models/yolo11s.onnx, venv),
+  dati in `/var/lib/SentinelAI`, video in `/var/lib/SentinelAI/video` (o la cartella scelta dall'app).
+- Servizio `sentinelai.service` (utente `sentinelai`, parte da solo). Registro: `journalctl -u sentinelai`.
+- Senza password resta su 127.0.0.1. Password: dall'app, oppure
+  `runuser -u sentinelai -- /opt/sentinelai/venv/bin/python /opt/sentinelai/linux/imposta-password.py` e `systemctl restart sentinelai`.
+- Nomi ammessi nell'indirizzo: gli IP del CT e il suo nome; altri con `Environment=SENTINEL_NOMI=...` nel servizio.

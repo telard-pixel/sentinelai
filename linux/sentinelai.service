@@ -1,0 +1,27 @@
+[Unit]
+Description=SentinelAI (telecamere, YOLO11s)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sentinelai
+Group=sentinelai
+WorkingDirectory=/opt/sentinelai
+Environment=SENTINEL_DATI=/var/lib/SentinelAI
+Environment=SENTINEL_PORTA=8765
+Environment=TZ=Europe/Rome
+# OpenCV: un thread per core di default; lasciamo un core libero al resto del CT
+Environment=OMP_NUM_THREADS=3
+ExecStart=/opt/sentinelai/venv/bin/python /opt/sentinelai/linux/sentinel_server.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/SentinelAI /mnt
+# niente sudo, niente dispositivi
+PrivateDevices=true
+
+[Install]
+WantedBy=multi-user.target
