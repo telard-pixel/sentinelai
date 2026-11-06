@@ -116,11 +116,29 @@ def save_clip_file(settings, data: bytes, camera_name: str, clip_id: str, wall_u
         day.mkdir(parents=True, exist_ok=True)
         path = day / f"{_safe(camera_name)}_{local.strftime('%H%M%S')}_{clip_id[:6]}.mp4"
         tmp = path.with_suffix(".mp4.tmp")
-        tmp.write_bytes(data)
-        os.replace(tmp, path)
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+        except OSError:
+            try:
+                tmp.unlink(missing_ok=True)     # disco pieno: niente .tmp abbandonati
+            except OSError:
+                pass
+            raise
         return path, warn
     except OSError as exc:
         return None, f"Video non salvato nella cartella ({exc}): resta nel database."
+
+
+def same_place(a, b) -> bool:
+    """Stessa cartella o stesso file anche se scritti diversamente (Z:\\ e \\\\nas\\..., link, ..)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        try:
+            return Path(a).resolve() == Path(b).resolve()
+        except OSError:
+            return False
 
 
 def encode_mp4(frames):

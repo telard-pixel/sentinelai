@@ -343,6 +343,11 @@ async def _set_password(body: PasswordIn, request: Request, response: Response):
     new_generation()
     if not login_required():
         response.delete_cookie(COOKIE)
+        # tolta la password si spegne anche "chiedi a ogni apertura": rimettendola non si riaccende da solo
+        try:
+            _lock_file().unlink(missing_ok=True)
+        except OSError:
+            pass
         return {"password_required": False, "token": ""}
     token = make_token()
     from server import real_scheme

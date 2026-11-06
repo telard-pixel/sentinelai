@@ -37,8 +37,11 @@ BACKGROUND_SECONDS = 60
 # (chi compare senza muoversi viene trovato lo stesso). Con la scena ferma il consumo crolla.
 IDLE_INTERVAL = 3.0
 FOLLOW_SPEED = 0.03       # inquadrature al secondo: sotto è "fermo" (lo si ricontrolla ogni IDLE_INTERVAL)
-MOTION_PIXEL = 18         # differenza di luminosità (0-255) per dire che un punto è cambiato
-MOTION_RATIO = 0.0015     # frazione dei punti cambiati per dire "movimento" (circa 23 punti su 160x96)
+# Soglie basse (agente di prova 105): di notte (IR, poco contrasto) e con persone piccole/lontane 18 e 0,0015
+# non scattavano e un allarme si perdeva. Con 8 e 0,0005 nessun allarme perso; rumore del sensore e orologio
+# sovrimpresso restano sotto (0-5% dei controlli).
+MOTION_PIXEL = 8          # differenza di luminosità (0-255) per dire che un punto è cambiato
+MOTION_RATIO = 0.0005     # frazione dei punti cambiati per dire "movimento" (circa 8 punti su 160x96)
 # Cose ferme (06/11/2026, clip del garage: bici appesa vista come "persona" per minuti). Una traccia che non si è
 # MAI mossa (vedi detection.Track.update_motion: mediana degli ultimi punti, 3 analisi di fila, soglia legata al
 # riquadro) per STATIC_LEARN secondi, e mai riconosciuta con sicurezza (meno di SURE_HITS analisi a SURE_CONF), diventa un
@@ -109,6 +112,7 @@ class StreamSession:
         self.counts = {"in": 0, "out": 0}
         self.motion_prev = None
         self.last_tracks: list = []
+        self.last_zones: list = []
         self.last_detect = -1e9
         self.analyses: list[float] = []     # istanti delle analisi AI (per "analisi al secondo")
         self.frame_times: list[float] = []
@@ -255,19 +259,27 @@ class StreamSession:
         moving = self.motion(frame)
         # "sta seguendo" = qualcosa (non fermo) che si muove: un'auto parcheggiata riconosciuta con sicurezza non deve
         # tenere l'AI a pieno ritmo per sempre
-        following = any(not t.fixed and math.hypot(*t.vel) > FOLLOW_SPEED for t in self.tracker.tracks.values())
+        # Pieno ritmo anche per una traccia nuova non ancora confermata (sennò l'allarme d'ingresso di chi compare e
+        # resta fermo arrivava dopo 6 s) e per una traccia che manca (deve scadere in fretta: transiti e bilancio della
+        # linea puntuali). Agente di prova 105.
+        following = any(not t.fixed and (math.hypot(*t.vel) > FOLLOW_SPEED or t.hits < 3 or t.misses > 0)
+                        for t in self.tracker.tracks.values())
         return moving or following or now - self.last_detect >= IDLE_INTERVAL
 
     async def idle(self, frame, now):
         """Fotogramma senza AI: la clip continua a registrare (pre e post allarme), il resto resta com'è."""
         self.frame_times = [t for t in self.frame_times if now - t < 2] + [now]
-        tracks = [t for t in (self.last_tracks or []) if t.get("fixed")]
+        # Le tracce e le zone dell'ultima analisi, se quelle tracce esistono ancora: l'interfaccia non lampeggia
+        # (agente di prova 105: "ZONA OCCUPATA" e "In scena" comparivano 1 volta su 10).
+        alive = set(self.tracker.tracks)
+        tracks = [t for t in (self.last_tracks or []) if t["id"] in alive]
         await self.recorder.push(now, frame, tracks)
         if now - self.last_flush >= HEAT_FLUSH_SECONDS:
             self.last_flush = now
             await self.flush_heat()
         return {"tracks": tracks, "events": [], "counts": self.counts, "fps": round(len(self.frame_times) / 2, 1),
-                "ai_fps": round(len([t for t in self.analyses if now - t < 4]) / 4, 1), "zones_active": [], "idle": True}
+                "ai_fps": round(len([t for t in self.analyses if now - t < 4]) / 4, 1),
+                "zones_active": self.last_zones if tracks else [], "idle": True}
 
     async def process(self, frame):
         s = self.settings
@@ -366,6 +378,7 @@ class StreamSession:
             self.last_background = now
             await self.save_background(frame)
         self.last_tracks = tracks
+        self.last_zones = sorted(active_zones)
         return {"tracks": tracks, "events": events, "counts": self.counts,
                 "fps": round(len(self.frame_times) / 2, 1), "ai_fps": round(len(self.analyses) / 4, 1),
                 "zones_active": sorted(active_zones)}

@@ -605,7 +605,7 @@ async def move_clips_here():
     docs = await db.clips.find({"status": "ready"}, {"_id": 0, "id": 1, "file": 1, "camera_name": 1, "timestamp": 1}).to_list(100000)
     for d in docs:
         cur = d.get("file")
-        if cur and Path(cur).parent.parent == folder:
+        if cur and Path(cur).exists() and clips_mod.same_place(Path(cur).parent.parent, folder):
             continue
         try:
             if cur:
@@ -623,7 +623,9 @@ async def move_clips_here():
                 failed += 1
                 continue
             await db.clips.update_one({"id": d["id"]}, {"$set": {"file": str(path)}, "$unset": {"data": ""}})
-            if cur:
+            # agente di prova 105: se il "nuovo" file è lo stesso di prima (stessa cartella scritta in altro modo)
+            # cancellarlo voleva dire perdere il video
+            if cur and Path(cur).exists() and not clips_mod.same_place(cur, path):
                 await asyncio.to_thread(_remove_file, cur)
             moved += 1
         except (OSError, ValueError) as exc:
@@ -663,7 +665,7 @@ async def storage():
     async for d in db.clips.find({"status": "ready"}, {"_id": 0, "file": 1, "size": 1}):
         if d.get("file"):
             files_mb += d.get("size") or 0
-            if folder is None or Path(d["file"]).parent.parent != folder:
+            if folder is None or not clips_mod.same_place(Path(d["file"]).parent.parent, folder):
                 elsewhere += 1
         else:
             in_db += 1

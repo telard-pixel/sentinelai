@@ -295,9 +295,15 @@ class DesktopApi:
         return res[0] if res else ""
 
     def open_folder(self, path=""):
-        p = Path(path or videos_folder())
+        # Solo cartelle che esistono già (la predefinita si può creare): mai file o programmi.
         try:
-            p.mkdir(parents=True, exist_ok=True)
+            if not path:
+                p = videos_folder()
+                p.mkdir(parents=True, exist_ok=True)
+            else:
+                p = Path(path)
+                if not p.is_dir():
+                    return False
             os.startfile(str(p))  # noqa: S606 (solo Windows)
             return True
         except OSError:
@@ -344,11 +350,18 @@ class AppWindow:
             return True      # senza icona vicino all'orologio la X chiude davvero (sennò non si spegnerebbe più)
         # La X nasconde e basta: il server e le telecamere restano accesi (come chiudere Edge prima).
         # Con "Chiedi la password a ogni apertura" la pagina si richiude prima di sparire (1.0.5).
-        def hide():
+        def lock():
             try:
                 self.window.evaluate_js("window.__sentinelLock && window.__sentinelLock()")
             except Exception:
                 pass
+
+        def hide():
+            # evaluate_js aspetta che la pagina sia pronta (fino a 20 s): la X non deve aspettare
+            if self.ready.is_set():
+                t = threading.Thread(target=lock, daemon=True)
+                t.start()
+                t.join(2)
             self.window.hide()
         threading.Thread(target=hide, daemon=True).start()
         if not self.close_hint_done and self.tray is not None:

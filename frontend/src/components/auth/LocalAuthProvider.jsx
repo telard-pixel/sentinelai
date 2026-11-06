@@ -12,8 +12,11 @@ const unlocked = () => { try { return sessionStorage.getItem(UNLOCKED) === "1"; 
 const AuthContext = createContext(null);
 export const useLocalAuth = () => useContext(AuthContext);
 
+// Con "chiedi a ogni apertura" il gettone sta solo in questa scheda (sessionStorage): aprire una seconda scheda
+// non butta fuori la prima (agente di prova 105). Altrimenti in localStorage (ricordato).
+let lockMode = false;
 const readToken = () => {
-  try { return localStorage.getItem(KEY) || ""; } catch { return ""; }
+  try { return sessionStorage.getItem(KEY) || localStorage.getItem(KEY) || ""; } catch { return ""; }
 };
 
 export default function LocalAuthProvider({ children }) {
@@ -22,7 +25,10 @@ export default function LocalAuthProvider({ children }) {
   const [token, setTokenState] = useState(readToken);
 
   const setToken = useCallback((t) => {
-    try { t ? localStorage.setItem(KEY, t) : localStorage.removeItem(KEY); } catch {}
+    try {
+      localStorage.removeItem(KEY); sessionStorage.removeItem(KEY);
+      if (t) (lockMode ? sessionStorage : localStorage).setItem(KEY, t);
+    } catch {}
     mark(!!t);
     setTokenState(t || "");
   }, []);
@@ -43,7 +49,20 @@ export default function LocalAuthProvider({ children }) {
 
   const refreshConfig = useCallback(async () => {
     const r = await fetch(`${BACKEND}/api/auth/config`);
-    if (r.ok) setConfig(await r.json());
+    if (r.ok) {
+      const cfg = await r.json();
+      const was = lockMode;
+      lockMode = !!(cfg.lock_on_open && cfg.password_required);
+      if (was !== lockMode) {
+        // opzione appena cambiata: il gettone passa nel posto giusto
+        try {
+          const t = sessionStorage.getItem(KEY) || localStorage.getItem(KEY);
+          localStorage.removeItem(KEY); sessionStorage.removeItem(KEY);
+          if (t) (lockMode ? sessionStorage : localStorage).setItem(KEY, t);
+        } catch {}
+      }
+      setConfig(cfg);
+    }
   }, []);
 
   useEffect(() => {
@@ -62,10 +81,11 @@ export default function LocalAuthProvider({ children }) {
         const r = await fetch(`${BACKEND}/api/auth/config`);
         if (r.ok) {
           const cfg = await r.json();
-          if (cfg.lock_on_open && cfg.password_required && !unlocked()) {
+          lockMode = !!(cfg.lock_on_open && cfg.password_required);
+          if (lockMode && !unlocked()) {
             // finestra appena aperta: si richiede la password anche se c'è un gettone salvato
             try { await fetch(`${BACKEND}/api/auth/lock`, { method: "POST", credentials: "include" }); } catch {}
-            try { localStorage.removeItem(KEY); } catch {}
+            try { localStorage.removeItem(KEY); sessionStorage.removeItem(KEY); } catch {}
             setTokenState("");
           }
           return cancelled || setConfig(cfg);

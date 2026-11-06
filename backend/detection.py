@@ -297,7 +297,11 @@ class Tracker:
             # Con YOLO11s le analisi sono 2-3 al secondo: tra una e l'altra ci si sposta di più. Il limite cresce
             # col tempo, ma al massimo di 2 intervalli di analisi (non 1,5 s: a 10 analisi/s un oggetto nuovo
             # comparso lontano poco dopo non deve prendersi la traccia di uno sparito).
-            gate = min(self.MAX_GATE, self.max_dist + max(0.0, min(dt, 2 * fdt) - 0.2) * self.GATE_SPEED)
+            # Con una storia (>= 5 rilevamenti) si conosce la velocità: chi va piano non può "saltare" lontano su un
+            # oggetto nuovo dopo un'analisi mancata (agente di prova 105: una persona lenta si prendeva la traccia di
+            # una appena comparsa a 0,36 di distanza, che perdeva il suo allarme d'ingresso).
+            rate = self.GATE_SPEED if tr.hits < 5 else min(self.GATE_SPEED, 2 * math.hypot(*tr.vel) + 0.15)
+            gate = min(self.MAX_GATE, self.max_dist + max(0.0, min(dt, 2 * fdt) - 0.2) * rate)
             for di, (c, dconf, dbox) in enumerate(dets):
                 if c != tr.cls:
                     continue
