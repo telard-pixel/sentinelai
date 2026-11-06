@@ -163,13 +163,36 @@ def annotated_snapshot(frame, box, label):
     return encode_jpeg(img, 640)
 
 
+STATIC_MOVE_MIN = 0.03     # spostamento (mediana) oltre cui un oggetto "si è mosso": almeno questo...
+STATIC_MOVE_REL = 0.15     # ...o il 15% della diagonale del riquadro (un'auto vicina trema di più di una persona lontana)
+MOVE_CONFIRM = 3           # analisi di fila oltre la soglia per dire "si è mosso" (un riquadro storto non basta)
+SURE_CONF = 0.6            # riconosciuto "con sicurezza" (mai cosa ferma)...
+SURE_HITS = 3              # ...se succede in almeno 3 analisi (un riquadro storto al 60% non basta)
+INHERIT_SECONDS = 10       # una traccia persa da meno di così e ricomparsa lì vicino passa la sua storia alla nuova
+
+
+def _median(vals):
+    v = sorted(vals)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
+
+def _median_point(points):
+    return _median([p[0] for p in points]), _median([p[1] for p in points])
+
+
 class Track:
     def __init__(self, tid, cls, conf, box, cx, cy, now):
         self.id, self.cls, self.conf, self.box = tid, cls, conf, box
         self.first = (cx, cy)
         self.born = now
-        self.max_disp = 0.0       # spostamento massimo dal punto di nascita (per riconoscere le cose ferme)
+        self.first_points = [(cx, cy)]   # primi 5 punti: la loro mediana è il punto di partenza "stabile"
+        self.move_run = 0
+        self.moved = False        # si è mosso davvero almeno una volta (mai più "cosa ferma")
+        self.max_conf = conf
+        self.sure_hits = int(conf >= SURE_CONF)
         self.fixed = False        # "cosa ferma" (es. bici appesa scambiata per persona): niente eventi
+        self.vel = (0.0, 0.0)     # velocità stimata (inquadrature/s) per prevedere dove sarà
         self.history = deque([(cx, cy)], maxlen=20)
         self.last_seen = now
         self.hits = 1
@@ -178,54 +201,111 @@ class Track:
         self.snap_conf = 0.0
         self.crossed = False
 
+    def inherit(self, old):
+        """Stessa cosa ripresa dopo una breve perdita: la nuova traccia ne eredita la storia di movimento."""
+        self.first, self.born, self.first_points = old.first, old.born, list(old.first_points)
+        self.moved, self.max_conf = old.moved, max(self.max_conf, old.max_conf)
+        self.sure_hits += old.sure_hits
+        self.fixed = old.fixed and not self.moved and self.sure_hits < SURE_HITS
+
+    def update_motion(self, cx, cy):
+        if len(self.first_points) < 5:
+            self.first_points.append((cx, cy))
+        start = _median_point(self.first_points)
+        now_pos = _median_point(list(self.history)[-5:])
+        b = self.box
+        thr = max(STATIC_MOVE_MIN, STATIC_MOVE_REL * math.hypot(b[2] - b[0], b[3] - b[1]))
+        if math.hypot(now_pos[0] - start[0], now_pos[1] - start[1]) >= thr:
+            self.move_run += 1
+            if self.move_run >= MOVE_CONFIRM:
+                self.moved = True
+        else:
+            self.move_run = 0
+
 
 class Tracker:
     MAX_GATE = 0.35       # frazione dell'inquadratura
     GATE_SPEED = 0.5      # inquadrature al secondo: più veloce di una persona che attraversa tutta l'immagine in 2 s
+    MAX_SPEED = 1.5       # oltre questa velocità stimata è un errore di associazione, non un movimento
 
     def __init__(self, max_dist=0.12, ttl=1.5):
         self.tracks: dict[int, Track] = {}
         self.next_id = 1
         self.max_dist = max_dist
         self.ttl = ttl
+        self.frame_dt = None      # intervallo medio fra due analisi
+        self.last_update = None
+        self.gone: list[Track] = []   # tracce scadute da poco (per l'eredità)
 
     def update(self, dets, now):
+        if self.last_update is not None:
+            dt = now - self.last_update
+            if dt > 0:
+                self.frame_dt = dt if self.frame_dt is None else 0.8 * self.frame_dt + 0.2 * dt
+        self.last_update = now
+        fdt = self.frame_dt or 0.2
         pairs = []
         cents = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for _, _, b in dets]
         for ti, tr in self.tracks.items():
             lx, ly = tr.history[-1]
-            # 06/11/2026: con YOLO11s si analizzano 2-3 fotogrammi al secondo invece di 5-6: chi cammina si sposta
-            # di più tra un'analisi e l'altra e con 0,12 fisso la traccia si spezzava. Il limite cresce col tempo
-            # passato dall'ultimo avvistamento (oltre 0,2 s), fino a MAX_GATE.
-            gate = min(self.MAX_GATE, self.max_dist + max(0.0, now - tr.last_seen - 0.2) * self.GATE_SPEED)
+            dt = now - tr.last_seen
+            # 06/11/2026 (agente di prova 104): previsione a velocità costante, così due persone che si incrociano
+            # con 2 analisi al secondo non si scambiano la traccia.
+            pdt = min(dt, 1.0)
+            px, py = lx + tr.vel[0] * pdt, ly + tr.vel[1] * pdt
+            # Con YOLO11s le analisi sono 2-3 al secondo: tra una e l'altra ci si sposta di più. Il limite cresce
+            # col tempo, ma al massimo di 2 intervalli di analisi (non 1,5 s: a 10 analisi/s un oggetto nuovo
+            # comparso lontano poco dopo non deve prendersi la traccia di uno sparito).
+            gate = min(self.MAX_GATE, self.max_dist + max(0.0, min(dt, 2 * fdt) - 0.2) * self.GATE_SPEED)
             for di, (c, _, _) in enumerate(dets):
                 if c != tr.cls:
                     continue
-                d = math.hypot(cents[di][0] - lx, cents[di][1] - ly)
+                d = math.hypot(cents[di][0] - px, cents[di][1] - py)
                 if d < gate:
-                    pairs.append((d, ti, di))
+                    # chi si muove ha la precedenza su una "cosa ferma" (persona davanti alla bici appesa)
+                    pairs.append((tr.fixed, d, ti, di))
         pairs.sort()
         used_t, used_d, active = set(), set(), []
-        for _, ti, di in pairs:
+        for _, _, ti, di in pairs:
             if ti in used_t or di in used_d:
                 continue
             used_t.add(ti)
             used_d.add(di)
             tr = self.tracks[ti]
             c, conf, box = dets[di]
+            dt = now - tr.last_seen
+            if dt > 0:
+                lx, ly = tr.history[-1]
+                vx, vy = (cents[di][0] - lx) / dt, (cents[di][1] - ly) / dt
+                sp = math.hypot(vx, vy)
+                if sp > self.MAX_SPEED:
+                    vx, vy = vx * self.MAX_SPEED / sp, vy * self.MAX_SPEED / sp
+                tr.vel = (vx, vy) if tr.hits == 1 else (0.5 * tr.vel[0] + 0.5 * vx, 0.5 * tr.vel[1] + 0.5 * vy)
             tr.conf, tr.box, tr.last_seen = conf, box, now
+            tr.max_conf = max(tr.max_conf, conf)
+            tr.sure_hits += conf >= SURE_CONF
             tr.history.append(cents[di])
-            tr.max_disp = max(tr.max_disp, math.hypot(cents[di][0] - tr.first[0], cents[di][1] - tr.first[1]))
+            tr.update_motion(*cents[di])
             tr.hits += 1
             active.append(tr)
+        self.gone = [g for g in self.gone if now - g.last_seen <= INHERIT_SECONDS]
         for di, (c, conf, box) in enumerate(dets):
             if di in used_d:
                 continue
             tr = Track(self.next_id, c, conf, box, *cents[di], now)
+            diag = math.hypot(box[2] - box[0], box[3] - box[1])
+            near = [(math.hypot(g.history[-1][0] - cents[di][0], g.history[-1][1] - cents[di][1]), g)
+                    for g in self.gone if g.cls == c]
+            near = [(d, g) for d, g in near if d < max(0.08, 0.5 * diag)]
+            if near:
+                old = min(near, key=lambda x: x[0])[1]
+                tr.inherit(old)
+                self.gone.remove(old)
             self.tracks[self.next_id] = tr
             self.next_id += 1
             active.append(tr)
         expired = [t for t in self.tracks.values() if now - t.last_seen > self.ttl]
         for t in expired:
             del self.tracks[t.id]
+        self.gone += expired
         return active, expired

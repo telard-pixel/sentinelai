@@ -268,6 +268,9 @@ class AppWindow:
         self.ready = threading.Event()
         self.close_hint_done = False
         self.tray = None
+        self.minimized = False
+        self.mode = "avvio"           # avvio → webview, oppure edge se WebView2 manca
+        self.pending_show = False     # "mostra" arrivato prima che la finestra esistesse
 
     def create(self, hidden: bool):
         import webview
@@ -284,6 +287,9 @@ class AppWindow:
             min_size=(min(900, w), min(600, h)), hidden=hidden, background_color="#090D14", text_select=True)
         self.window.events.closing += self.on_closing
         self.window.events.loaded += lambda: self.ready.set()
+        self.window.events.minimized += lambda: setattr(self, "minimized", True)
+        self.window.events.restored += lambda: setattr(self, "minimized", False)
+        self.window.events.maximized += lambda: setattr(self, "minimized", False)
 
     def on_closing(self):
         if self.quitting or self.tray is None:
@@ -301,12 +307,26 @@ class AppWindow:
 
     def show(self):
         if self.window is None:
+            self.pending_show = True
             return
         try:
             self.window.show()
-            self.window.restore()
+            if self.minimized:          # una finestra ingrandita resta ingrandita
+                self.window.restore()
         except Exception:
             log("finestra: impossibile mostrarla:\n" + traceback.format_exc())
+
+    def watch_session_end(self):
+        """Spegnimento o disconnessione di Windows: la X non deve "annullare" la chiusura (bloccherebbe Windows)."""
+        try:
+            from Microsoft.Win32 import SystemEvents  # pythonnet, già caricato da pywebview
+
+            def ending(sender, args):
+                self.quitting = True
+            SystemEvents.SessionEnding += ending
+            self._session_handler = ending
+        except Exception:
+            log("avviso: spegnimento di Windows non intercettato:\n" + traceback.format_exc())
 
     def quit(self):
         self.quitting = True
@@ -318,16 +338,26 @@ class AppWindow:
 
     def run(self, hidden: bool) -> bool:
         """Blocca finché la finestra non viene chiusa con Esci. False se WebView2 non è disponibile."""
+        if self.quitting:
+            return True     # "Esci" premuto mentre partiva: niente finestra
         try:
             import webview
+            if os.name == "nt":
+                # Senza WebView2 pywebview NON dà errore: ripiega in silenzio su Internet Explorer (MSHTML),
+                # dove l'app non funziona (agente di prova 104). Qui lo si scopre e si passa a Edge.
+                import webview.platforms.winforms as wf
+                if getattr(wf, "renderer", None) != "edgechromium":
+                    raise RuntimeError(f"WebView2 non presente (motore disponibile: {getattr(wf, 'renderer', '?')})")
+                self.watch_session_end()
             webview.settings["ALLOW_DOWNLOADS"] = True                 # clip ed Excel si scaricano
             webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True  # link esterni nel browser normale
-            self.create(hidden)
+            self.create(hidden and not self.pending_show)
             webview.start(gui="edgechromium", private_mode=False, storage_path=str(DATA / "finestra-app"))
             return True
         except Exception:
             log("finestra WebView2 non disponibile, uso Edge:\n" + traceback.format_exc())
             self.window = None
+            self.mode = "edge"
             return False
 
 
@@ -532,6 +562,15 @@ def main():
     if not port_free(port):
         port = next(p for p in range(port + 1, port + 50) if port_free(p))
     PORT_FILE.write_text(str(port))
+    win = None
+    if not os.environ.get("SENTINEL_FINESTRA_EDGE"):
+        win = AppWindow(port)
+
+        def show_any():   # finestra propria; se WebView2 manca quella di Edge
+            open_window(port) if win.mode == "edge" else win.show()
+
+        # Subito, prima del server: un secondo avvio durante il caricamento trova già il segnale (agente 104).
+        listen_show_requests(show_any)
     rete = bool(cfg.get("rete"))
     if rete and not (cfg.get("password") or stored_password_ok()):
         # Aperto alla rete senza password = chiunque in casa (o un ospite sul Wi-Fi) comanda le telecamere.
@@ -545,13 +584,7 @@ def main():
             break
         time.sleep(0.5)
     hidden = "--minimizzato" in args
-    if not os.environ.get("SENTINEL_FINESTRA_EDGE"):
-        win = AppWindow(port)
-
-        def show_any():   # finestra propria se c'è, altrimenti quella di Edge
-            win.show() if win.window is not None else open_window(port)
-
-        listen_show_requests(show_any)
+    if win is not None:
         try:
             win.tray = run_tray(port, srv, show=show_any, on_exit=win.quit, background=True)
         except Exception:
@@ -568,7 +601,10 @@ def main():
                 time.sleep(1)
             time.sleep(1)
             return
-    listen_show_requests(lambda: open_window(port))
+    if win is None:
+        listen_show_requests(lambda: open_window(port))
+    else:
+        win.mode = "edge"
     if not hidden:
         open_window(port)
     try:

@@ -18,7 +18,7 @@ from fastapi import WebSocket
 
 import telegram_bot
 from clips import ClipRecorder
-from detection import COCO_IT, Tracker, annotated_snapshot, category_of, detector, encode_jpeg, heading_of, line_side, within_segment
+from detection import SURE_HITS, COCO_IT, Tracker, annotated_snapshot, category_of, detector, encode_jpeg, heading_of, line_side, within_segment
 from models import HEAT_H, HEAT_W, Camera, Event, Settings, Zone
 
 logger = logging.getLogger(__name__)
@@ -31,14 +31,14 @@ LINE_STRONG = 0.045       # ...ma se è già ben oltre la linea (3 margini) bast
 LINE_ARM = 0.07           # un passaggio conta solo se prima l'oggetto è stato DAVVERO lontano dall'altra parte
 ZONE_EXIT_GRACE = 1.5     # secondi fuori dalla zona prima di considerarla davvero uscita
 BACKGROUND_SECONDS = 60
-# Cose ferme (06/11/2026, clip del garage: bici appesa vista come "persona" per minuti). Una traccia che dalla
-# nascita non si è MAI spostata più di STATIC_MOVE per STATIC_LEARN secondi diventa un "punto fisso": niente
-# eventi, conteggi o mappa di calore. Le tracce nuove dello stesso tipo nello stesso punto (sovrapposizione
-# ≥ STATIC_IOU) sono subito ferme. Appena una traccia si muove davvero (≥ STATIC_RELEASE) torna normale.
-# Chi entra camminando si è già spostato: non diventa mai "fermo", nemmeno se poi resta immobile in una zona.
+# Cose ferme (06/11/2026, clip del garage: bici appesa vista come "persona" per minuti). Una traccia che non si è
+# MAI mossa (vedi detection.Track.update_motion: mediana degli ultimi punti, 3 analisi di fila, soglia legata al
+# riquadro) per STATIC_LEARN secondi, e mai riconosciuta con sicurezza (meno di SURE_HITS analisi a SURE_CONF), diventa un
+# "punto fisso": niente eventi, conteggi o mappa di calore. Tracce nuove dello stesso tipo, nello stesso punto e
+# della stessa grandezza sono subito ferme (sempre se poco sicure). Chi si muove davvero, o viene riconosciuto con
+# sicurezza, torna normale. Una traccia persa per pochi secondi passa la sua storia alla nuova (agente di prova 104:
+# una persona ferma in zona, persa per 3 s, diventava "cosa ferma" e la sosta non scattava).
 STATIC_LEARN = 300
-STATIC_MOVE = 0.02
-STATIC_RELEASE = 0.03
 STATIC_IOU = 0.6
 STATIC_FORGET = 900       # un punto fisso non più visto da 15 minuti si dimentica
 
@@ -148,13 +148,15 @@ class StreamSession:
     def update_fixed(self, active, now):
         self.fixed_spots = [sp for sp in self.fixed_spots if now - sp["seen"] < STATIC_FORGET]
         for tr in active:
-            if tr.max_disp >= STATIC_RELEASE:
+            if tr.moved or tr.sure_hits >= SURE_HITS:
                 if tr.fixed:
-                    logger.info("[%s] %s #%d si è mosso: non è più una cosa ferma", self.camera.name, COCO_IT[tr.cls], tr.id)
+                    logger.info("[%s] %s #%d si è mossa o è sicura: non è più una cosa ferma", self.camera.name, COCO_IT[tr.cls], tr.id)
                 tr.fixed = False
                 continue
-            spot = next((sp for sp in self.fixed_spots if sp["cls"] == tr.cls and box_iou(sp["box"], tr.box) >= STATIC_IOU), None)
-            if spot is None and not tr.fixed and tr.max_disp < STATIC_MOVE and now - tr.born >= STATIC_LEARN:
+            area = (tr.box[2] - tr.box[0]) * (tr.box[3] - tr.box[1])
+            spot = next((sp for sp in self.fixed_spots if sp["cls"] == tr.cls and box_iou(sp["box"], tr.box) >= STATIC_IOU
+                         and 0.6 <= area / max(1e-9, (sp["box"][2] - sp["box"][0]) * (sp["box"][3] - sp["box"][1])) <= 1.67), None)
+            if spot is None and not tr.fixed and now - tr.born >= STATIC_LEARN:
                 spot = {"cls": tr.cls, "box": tuple(tr.box), "seen": now}
                 self.fixed_spots.append(spot)
                 logger.info("[%s] %s ferma da %d s nello stesso punto: la tratto come cosa ferma (niente eventi)",
