@@ -54,7 +54,11 @@ def heading_of(dx: float, dy: float, min_mag: float = 0.012):
 
 
 ONNX_PATH = Path(os.environ.get("SENTINEL_MODEL_DIR", MODEL_PATH.parent)) / f"{MODEL_NAME}.onnx"
-IMGSZ = 640
+IMGSZ = 640                # larghezza d'ingresso del modello
+# 06/11/2026 (1.0.5, CPU): modello esportato 640x448 invece di 640x640. Con le telecamere 3:2 e 16:9 un terzo
+# del quadrato era solo bordo grigio: circa il 30% di calcolo in meno, stesso dettaglio. Un modello quadrato
+# (vecchia cache) funziona ancora: in load() si prova e si ripiega.
+IMG_H = 448
 
 
 class Detector:
@@ -72,7 +76,12 @@ class Detector:
             net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
             net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
             self.model, self.kind = net, "onnx"
-            self._detect_onnx(np.zeros((360, 640, 3), dtype=np.uint8), 0.5, 0.5, None)
+            global IMG_H
+            try:
+                self._detect_onnx(np.zeros((360, 640, 3), dtype=np.uint8), 0.5, 0.5, None)
+            except cv2.error:
+                IMG_H = IMGSZ          # modello quadrato
+                self._detect_onnx(np.zeros((360, 640, 3), dtype=np.uint8), 0.5, 0.5, None)
             return
         from ultralytics import YOLO
         MODEL_PATH.parent.mkdir(exist_ok=True)
@@ -84,16 +93,16 @@ class Detector:
 
     def _detect_onnx(self, frame, conf, iou, classes):
         h, w = frame.shape[:2]
-        r = min(IMGSZ / w, IMGSZ / h)
+        r = min(IMGSZ / w, IMG_H / h)
         nw, nh = int(round(w * r)), int(round(h * r))
-        px, py = (IMGSZ - nw) // 2, (IMGSZ - nh) // 2
-        canvas = np.full((IMGSZ, IMGSZ, 3), 114, dtype=np.uint8)
+        px, py = (IMGSZ - nw) // 2, (IMG_H - nh) // 2
+        canvas = np.full((IMG_H, IMGSZ, 3), 114, dtype=np.uint8)
         canvas[py:py + nh, px:px + nw] = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
-        blob = cv2.dnn.blobFromImage(canvas, 1 / 255.0, (IMGSZ, IMGSZ), swapRB=True, crop=False)
+        blob = cv2.dnn.blobFromImage(canvas, 1 / 255.0, (IMGSZ, IMG_H), swapRB=True, crop=False)
         with self.lock:
             self.model.setInput(blob)
             pred = self.model.forward()
-        pred = np.squeeze(pred, 0).T                    # (8400, 84): cx, cy, w, h, 80 punteggi
+        pred = np.squeeze(pred, 0).T                    # (N, 84): cx, cy, w, h, 80 punteggi
         scores = pred[:, 4:]
         cls = scores.argmax(1)
         best = scores[np.arange(len(cls)), cls]
@@ -213,6 +222,7 @@ class Track:
         self.vel = (0.0, 0.0)     # velocità stimata (inquadrature/s) per prevedere dove sarà
         self.history = deque([(cx, cy)], maxlen=20)
         self.last_seen = now
+        self.misses = 0           # analisi di fila in cui non è stata vista
         self.hits = 1
         self.side = None
         self.snap = None
@@ -251,6 +261,7 @@ class Tracker:
     MAX_GATE = 0.35       # frazione dell'inquadratura
     GATE_SPEED = 0.5      # inquadrature al secondo: più veloce di una persona che attraversa tutta l'immagine in 2 s
     MAX_SPEED = 1.5       # oltre questa velocità stimata è un errore di associazione, non un movimento
+    MISS_MAX = 3
 
     def __init__(self, max_dist=0.12, ttl=1.5):
         self.tracks: dict[int, Track] = {}
@@ -265,7 +276,7 @@ class Tracker:
     def update(self, dets, now):
         if self.last_update is not None:
             dt = now - self.last_update
-            if dt > 0:
+            if 0 < dt < 1.0:   # le pause del risparmio CPU (scena ferma) non contano come ritmo di analisi
                 self.frame_dt = dt if self.frame_dt is None else 0.8 * self.frame_dt + 0.2 * dt
         self.last_update = now
         fdt = self.frame_dt or 0.2
@@ -311,7 +322,7 @@ class Tracker:
                 if sp > self.MAX_SPEED:
                     vx, vy = vx * self.MAX_SPEED / sp, vy * self.MAX_SPEED / sp
                 tr.vel = (vx, vy) if tr.hits == 1 else (0.5 * tr.vel[0] + 0.5 * vx, 0.5 * tr.vel[1] + 0.5 * vy)
-            tr.conf, tr.box, tr.last_seen = conf, box, now
+            tr.conf, tr.box, tr.last_seen, tr.misses = conf, box, now, 0
             tr.max_conf = max(tr.max_conf, conf)
             tr.sure_hits += conf >= SURE_CONF
             tr.history.append(cents[di])
@@ -338,7 +349,12 @@ class Tracker:
             self.tracks[self.next_id] = tr
             self.next_id += 1
             active.append(tr)
-        expired = [t for t in self.tracks.values() if now - t.last_seen > self.ttl]
+        for t in self.tracks.values():
+            if t.last_seen != now:
+                t.misses += 1
+        # Scade se non vista da ttl secondi E in almeno MISS_MAX analisi: col risparmio CPU (un'analisi ogni 3 s a
+        # scena ferma) un'auto parcheggiata o una persona in sosta non vengono "perse" e ricreate a ogni controllo.
+        expired = [t for t in self.tracks.values() if now - t.last_seen > self.ttl and t.misses >= self.MISS_MAX]
         for t in expired:
             del self.tracks[t.id]
         self.gone += expired

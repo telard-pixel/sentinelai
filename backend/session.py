@@ -31,6 +31,14 @@ LINE_STRONG = 0.045       # ...ma se è già ben oltre la linea (3 margini) bast
 LINE_ARM = 0.07           # un passaggio conta solo se prima l'oggetto è stato DAVVERO lontano dall'altra parte
 ZONE_EXIT_GRACE = 1.5     # secondi fuori dalla zona prima di considerarla davvero uscita
 BACKGROUND_SECONDS = 60
+# Risparmio CPU (1.0.5): l'AI (YOLO11s, ~0,4 s a fotogramma con tutti i core) gira solo se serve. Un controllo
+# leggerissimo del movimento (immagine 160 px in grigi, differenza col fotogramma precedente) gira sempre; l'AI
+# parte se c'è movimento, se sta seguendo qualcosa che non è "fermo", o comunque ogni IDLE_INTERVAL secondi
+# (chi compare senza muoversi viene trovato lo stesso). Con la scena ferma il consumo crolla.
+IDLE_INTERVAL = 3.0
+FOLLOW_SPEED = 0.03       # inquadrature al secondo: sotto è "fermo" (lo si ricontrolla ogni IDLE_INTERVAL)
+MOTION_PIXEL = 18         # differenza di luminosità (0-255) per dire che un punto è cambiato
+MOTION_RATIO = 0.0015     # frazione dei punti cambiati per dire "movimento" (circa 23 punti su 160x96)
 # Cose ferme (06/11/2026, clip del garage: bici appesa vista come "persona" per minuti). Una traccia che non si è
 # MAI mossa (vedi detection.Track.update_motion: mediana degli ultimi punti, 3 analisi di fila, soglia legata al
 # riquadro) per STATIC_LEARN secondi, e mai riconosciuta con sicurezza (meno di SURE_HITS analisi a SURE_CONF), diventa un
@@ -99,6 +107,10 @@ class StreamSession:
         self.db, self.camera, self.settings, self.tz_offset = db, camera, settings, tz_offset
         self.tracker = Tracker()
         self.counts = {"in": 0, "out": 0}
+        self.motion_prev = None
+        self.last_tracks: list = []
+        self.last_detect = -1e9
+        self.analyses: list[float] = []     # istanti delle analisi AI (per "analisi al secondo")
         self.frame_times: list[float] = []
         self.recorder = ClipRecorder(db, camera, settings, tz_offset)
         self.heat: dict[str, dict[str, int]] = {}
@@ -230,11 +242,42 @@ class StreamSession:
                 snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} sosta · {z.name}")
                 events.append(await self.save_event("zona_sosta", tr, None, snap, z))
 
+    def motion(self, frame) -> bool:
+        h, w = frame.shape[:2]
+        small = cv2.resize(frame, (160, max(1, int(160 * h / w))), interpolation=cv2.INTER_AREA)
+        g = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+        prev, self.motion_prev = self.motion_prev, g
+        if prev is None or prev.shape != g.shape:
+            return True
+        return float((cv2.absdiff(g, prev) > MOTION_PIXEL).mean()) >= MOTION_RATIO
+
+    def needs_ai(self, frame, now) -> bool:
+        moving = self.motion(frame)
+        # "sta seguendo" = qualcosa (non fermo) che si muove: un'auto parcheggiata riconosciuta con sicurezza non deve
+        # tenere l'AI a pieno ritmo per sempre
+        following = any(not t.fixed and math.hypot(*t.vel) > FOLLOW_SPEED for t in self.tracker.tracks.values())
+        return moving or following or now - self.last_detect >= IDLE_INTERVAL
+
+    async def idle(self, frame, now):
+        """Fotogramma senza AI: la clip continua a registrare (pre e post allarme), il resto resta com'è."""
+        self.frame_times = [t for t in self.frame_times if now - t < 2] + [now]
+        tracks = [t for t in (self.last_tracks or []) if t.get("fixed")]
+        await self.recorder.push(now, frame, tracks)
+        if now - self.last_flush >= HEAT_FLUSH_SECONDS:
+            self.last_flush = now
+            await self.flush_heat()
+        return {"tracks": tracks, "events": [], "counts": self.counts, "fps": round(len(self.frame_times) / 2, 1),
+                "ai_fps": round(len([t for t in self.analyses if now - t < 4]) / 4, 1), "zones_active": [], "idle": True}
+
     async def process(self, frame):
         s = self.settings
         now = time.monotonic()
         if self.auto_tz:
             self.tz_offset = self.recorder.tz_offset = local_tz_offset()
+        if not self.needs_ai(frame, now):
+            return await self.idle(frame, now)
+        self.last_detect = now
+        self.analyses = [t for t in self.analyses if now - t < 4] + [now]
         dets = await asyncio.to_thread(detector.detect, frame, s.conf, s.iou, s.classes)
         active, expired = self.tracker.update(dets, now)
         self.update_fixed(active, now)
@@ -322,8 +365,10 @@ class StreamSession:
         if now - self.last_background >= BACKGROUND_SECONDS:
             self.last_background = now
             await self.save_background(frame)
+        self.last_tracks = tracks
         return {"tracks": tracks, "events": events, "counts": self.counts,
-                "fps": round(len(self.frame_times) / 2, 1), "zones_active": sorted(active_zones)}
+                "fps": round(len(self.frame_times) / 2, 1), "ai_fps": round(len(self.analyses) / 4, 1),
+                "zones_active": sorted(active_zones)}
 
     async def close(self):
         with_errors = []

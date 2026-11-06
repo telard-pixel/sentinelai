@@ -23,6 +23,7 @@ logger = logging.getLogger("monitor")
 FIRST_FRAME_TIMEOUT = 40     # alcune telecamere impiegano più di 10 s a mandare il primo fotogramma
 FRAME_TIMEOUT = 20
 MIN_LOOP_SECONDS = 0.1       # al massimo ~10 analisi al secondo per telecamera: basta per seguire chi passa
+IDLE_LOOP_SECONDS = 0.2      # scena ferma (niente AI): 5 controlli del movimento al secondo bastano
 BACKOFF = (3, 5, 10, 20, 30, 60)
 
 
@@ -159,7 +160,7 @@ class CameraWorker:
                         img = await asyncio.to_thread(encode_jpeg, frame, 960, 70)
                         h, w = frame.shape[:2]
                         self.broadcast({"type": "frame", "image": base64.b64encode(img).decode(), "width": w, "height": h, **result})
-                    rest = MIN_LOOP_SECONDS - (time.monotonic() - t0)
+                    rest = (IDLE_LOOP_SECONDS if result.get("idle") else MIN_LOOP_SECONDS) - (time.monotonic() - t0)
                     if rest > 0:
                         await asyncio.sleep(rest)
             except asyncio.CancelledError:

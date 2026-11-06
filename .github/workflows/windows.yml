@@ -34,11 +34,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
 
-      # ---------------------------------------------------------------- modello YOLO11s -> ONNX (una volta, poi in cache)
+      # ---------------------------------------------------------------- modello YOLO11s -> ONNX 640x448 (una volta, poi in cache)
       - name: Cache modello
         id: modello
         uses: actions/cache@v4
-        with: { path: models/yolo11s.onnx, key: yolo11s-onnx-ultralytics-8.3.55-opset12 }
+        with: { path: models/yolo11s.onnx, key: yolo11s-448x640-onnx-ultralytics-8.3.55-opset12 }
       - name: Esporta YOLO11s in ONNX
         if: steps.modello.outputs.cache-hit != 'true'
         shell: pwsh
@@ -48,10 +48,13 @@ jobs:
           C:\esporta\Scripts\python -m pip install -q torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
           C:\esporta\Scripts\python -m pip install -q ultralytics==8.3.55 onnx==1.17.0 torch==2.5.1 torchvision==0.20.1 --extra-index-url https://download.pytorch.org/whl/cpu
           C:\esporta\Scripts\python -c "import torch; print('torch', torch.__version__)"
-          C:\esporta\Scripts\python -c "from ultralytics import YOLO; YOLO('yolo11s.pt').export(format='onnx', imgsz=640, opset=12, simplify=False, dynamic=False)"
+          C:\esporta\Scripts\python -c "from ultralytics import YOLO; YOLO('yolo11s.pt').export(format='onnx', imgsz=(448, 640), opset=12, simplify=False, dynamic=False)"
           New-Item -ItemType Directory -Force models | Out-Null
           Move-Item yolo11s.onnx models\yolo11s.onnx -Force
           Get-Item models\yolo11s.onnx | Format-List Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with: { name: modello-onnx, path: models/yolo11s.onnx, retention-days: 3 }
 
       # ---------------------------------------------------------------- exe
       - name: Costruisci SentinelAI.exe
