@@ -84,6 +84,9 @@ async def auth_config():
 async def login(body: LoginIn, request: Request, response: Response):
     ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
     now = time.time()
+    if len(_fails) > 1000:   # pulizia: si tengono solo gli indirizzi con tentativi recenti
+        for k in [k for k, v in _fails.items() if not v or now - v[-1] > 900]:
+            _fails.pop(k, None)
     recent = [t for t in _fails.get(ip, []) if now - t < 900]
     if len(recent) >= 8:
         raise HTTPException(429, "Troppi tentativi: riprova tra qualche minuto")

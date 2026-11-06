@@ -28,7 +28,7 @@ from starlette.middleware.cors import CORSMiddleware
 import telegram_bot
 from auth_local import require_approved, users_router, ws_member
 from detection import COCO_IT, category_of, detector
-from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, stream_url
+from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, restore_url_password, stream_url
 from monitor import Manager
 from session import StreamSession
 
@@ -76,6 +76,45 @@ async def ensure_indexes() -> None:
 
 app = FastAPI(title="SentinelAI Vision Guard")
 manager = Manager(db)
+
+#: Nomi con cui si può chiamare il server (contro il "DNS rebinding": un sito che si finge 127.0.0.1).
+#: Vuoto = qualsiasi (Docker dietro nginx/Tailscale). La versione Windows mette 127.0.0.1,localhost.
+ALLOWED_HOSTS = {h.strip().lower() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()}
+
+
+def _hostname(value: str) -> str:
+    from urllib.parse import urlsplit
+    value = (value or "").strip()
+    try:
+        return (urlsplit(value if "//" in value else f"//{value}").hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def request_allowed(headers, method: str = "GET") -> Optional[str]:
+    """None se va bene, altrimenti il motivo del rifiuto. Vale per HTTP e WebSocket."""
+    host = _hostname(headers.get("x-forwarded-host") or headers.get("host", ""))
+    if ALLOWED_HOSTS and host not in ALLOWED_HOSTS:
+        return "indirizzo non ammesso"
+    origin = headers.get("origin")
+    # Le richieste che cambiano qualcosa (e i WebSocket, che il browser manda sempre con Origin) devono
+    # venire dalla pagina dell'app stessa, non da un altro sito.
+    if method not in ("GET", "HEAD", "OPTIONS") or headers.get("upgrade", "").lower() == "websocket":
+        if origin and origin != "null" and _hostname(origin) != host and _hostname(origin) not in ALLOWED_HOSTS:
+            return "richiesta da un altro sito"
+        if headers.get("sec-fetch-site") == "cross-site":
+            return "richiesta da un altro sito"
+    return None
+
+
+@app.middleware("http")
+async def guard(request: Request, call_next):
+    why = request_allowed(request.headers, request.method)
+    if why:
+        logger.warning("rifiutata %s %s: %s (host=%s origin=%s)", request.method, request.url.path, why,
+                       request.headers.get("host"), request.headers.get("origin"))
+        return Response(json.dumps({"detail": f"Rifiutata: {why}"}), status_code=403, media_type="application/json")
+    return await call_next(request)
 public = APIRouter(prefix="/api")
 api = APIRouter(prefix="/api", dependencies=[Depends(require_approved)])
 
@@ -150,6 +189,7 @@ async def update_camera(camera_id: str, body: CameraIn):
     data = body.model_dump()
     if not data["nvr_password"]:
         data["nvr_password"] = old.nvr_password   # campo vuoto = password invariata
+    data["url"] = restore_url_password(data["url"], old.url)
     cam = Camera(**data, id=old.id, created_at=old.created_at)
     await db.cameras.replace_one({"id": camera_id}, cam.model_dump())
     if cam.type in ("rtsp", "nvr") and cam.monitor:
@@ -535,6 +575,11 @@ async def telegram_test():
 
 @public.websocket("/ws/stream")
 async def stream_ws(ws: WebSocket):
+    why = request_allowed({**ws.headers, "upgrade": "websocket"})
+    if why:
+        logger.warning("WebSocket rifiutato: %s (origin=%s)", why, ws.headers.get("origin"))
+        await ws.close(code=4403)
+        return
     if await ws_member(ws.query_params.get("token", "") or ws.cookies.get("sentinel_token", "")) is None:
         await ws.close(code=4401)
         return
@@ -657,8 +702,12 @@ async def read_log(lines: int = Query(300, ge=10, le=5000)):
 app.include_router(public)
 app.include_router(users_router)
 app.include_router(api)
-app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
-                   allow_methods=["*"], allow_headers=["*"])
+# 06/11/2026 (revisione): prima CORS "*" con le credenziali = qualsiasi sito aperto nel browser poteva leggere e
+# comandare l'app (sul PC non c'è password). L'app e il server stanno sullo stesso indirizzo: CORS serve solo se
+# si mette un elenco esplicito in CORS_ORIGINS, mai "*".
+_cors = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip() and o.strip() != "*"]
+if _cors:
+    app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=_cors, allow_methods=["*"], allow_headers=["*"])
 
 
 DEMO_CAMERA = {"name": "Demo strada", "type": "demo"}

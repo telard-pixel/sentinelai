@@ -17,6 +17,8 @@ export function useStream(onEvents) {
   const [result, setResult] = useState(EMPTY);
   const [frame, setFrame] = useState(null);
   const [dims, setDims] = useState({ w: 16, h: 9 });
+  const startRef = useRef(null);
+  const retryRef = useRef(null);
 
   const sendFrame = useCallback(() => {
     const ws = wsRef.current;
@@ -50,6 +52,7 @@ export function useStream(onEvents) {
   };
 
   const stop = useCallback(() => {
+    clearTimeout(retryRef.current);
     const ws = wsRef.current;
     wsRef.current = null;
     if (ws) ws.close();
@@ -133,11 +136,19 @@ export function useStream(onEvents) {
         ws.send(JSON.stringify({ type: "start", camera_id: cameraId, tz_offset: new Date().getTimezoneOffset() }));
       ws.onmessage = handleMessage(ws, source);
       ws.onclose = () => {
-        if (wsRef.current === ws) setStatus({ state: "error", source, error: "Connessione al motore AI persa." });
+        if (wsRef.current !== ws) return;          // chiusa apposta con stop()
+        if (["rtsp", "nvr"].includes(source)) {
+          // 06/11/2026: le telecamere di rete le controlla il server; la finestra si ricollega da sola.
+          setStatus({ state: "error", source, error: "Connessione al motore persa: mi ricollego…" });
+          retryRef.current = setTimeout(() => { if (wsRef.current === ws) startRef.current?.({ cameraId, source, deviceId, file }); }, 4000);
+        } else {
+          setStatus({ state: "error", source, error: "Connessione al motore AI persa." });
+        }
       };
     },
     [stop, handleMessage],
   );
+  startRef.current = start;
 
   const send = useCallback((msg) => {
     if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify(msg));

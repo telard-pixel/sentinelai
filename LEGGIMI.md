@@ -74,3 +74,12 @@ Dati in `%LOCALAPPDATA%\SentinelAI` (database, clip, registro `sentinelai.log`).
 Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esporta YOLOv8n in ONNX, crea l'exe con
 PyInstaller e l'installer con Inno Setup, **prova l'exe e l'installer** (`SentinelAI.exe --prova`) e con un tag `vX.Y.Z`
 pubblica la Release.
+
+## Sicurezza (revisione 06/11/2026)
+
+- Il server risponde solo alla pagina dell'app: niente CORS aperto, i comandi e lo streaming che arrivano da un altro
+  sito vengono rifiutati (controllo di Origin / Sec-Fetch-Site), e nella versione Windows solo i nomi `127.0.0.1` e
+  `localhost` sono ammessi (protezione dal *DNS rebinding*). In Docker: `ALLOWED_HOSTS` in `backend/.env`.
+- Le password delle telecamere (NVR e dentro gli indirizzi RTSP) non arrivano mai al browser: si vedono come `****`.
+  Lasciando `****` la password resta quella di prima, ma solo per la stessa telecamera (stesso IP e porta).
+- Versione Windows: `"rete": true` funziona solo insieme a una `"password"`.

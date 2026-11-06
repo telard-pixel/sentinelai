@@ -21,7 +21,7 @@ def bot_token():
     return os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
 
-async def call(method: str, data: dict | None = None, files: dict | None = None, timeout: float = 60):
+async def call(method: str, data: dict | None = None, files: dict | None = None, timeout: float = 60, _tries: int = 0):
     token = bot_token()
     if not token:
         raise TelegramError("Token del bot Telegram non configurato")
@@ -29,9 +29,9 @@ async def call(method: str, data: dict | None = None, files: dict | None = None,
         r = await c.post(f"https://api.telegram.org/bot{token}/{method}", data=data, files=files)
     body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
     if not body.get("ok"):
-        if body.get("error_code") == 429:
-            await asyncio.sleep(body.get("parameters", {}).get("retry_after", 3))
-            return await call(method, data, files, timeout)
+        if body.get("error_code") == 429 and _tries < 3:   # al massimo 3 nuovi tentativi, poi si rinuncia
+            await asyncio.sleep(min(60, body.get("parameters", {}).get("retry_after", 3)))
+            return await call(method, data, files, timeout, _tries + 1)
         raise TelegramError(body.get("description") or f"HTTP {r.status_code}")
     return body["result"]
 

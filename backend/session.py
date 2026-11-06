@@ -136,10 +136,13 @@ class StreamSession:
             active_zones.add(z.id)
             st = state.get(z.id)
             if st is None:
-                st = state[z.id] = {"since": now, "dwell": False}
-                if z.alert_on_enter and tr.hits >= 3:
-                    snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} · {z.name}")
-                    events.append(await self.save_event("zona_ingresso", tr, None, snap, z))
+                st = state[z.id] = {"since": now, "dwell": False, "entered": False}
+            # 06/11/2026: prima l'allarme partiva solo se al primo istante dentro la zona la traccia era già
+            # confermata (3 rilevamenti): chi compariva direttamente nella zona non dava MAI l'allarme.
+            if z.alert_on_enter and not st["entered"] and tr.hits >= 3:
+                st["entered"] = True
+                snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} · {z.name}")
+                events.append(await self.save_event("zona_ingresso", tr, None, snap, z))
             if z.dwell_seconds and not st["dwell"] and now - st["since"] >= z.dwell_seconds:
                 st["dwell"] = True
                 snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} sosta · {z.name}")

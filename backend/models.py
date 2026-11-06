@@ -92,14 +92,38 @@ def stream_url(c: CameraIn, hide_password: bool = False) -> str:
     return f"rtsp://{auth}{c.nvr_host.strip()}:{c.nvr_port}{nvr_path(c)}"
 
 
+_URL_PW = re.compile(r"^([a-z][a-z0-9+.-]*://[^:/@\s]+):([^@\s]*)@", re.I)
+
+
+def mask_url_password(url: str) -> str:
+    return _URL_PW.sub(lambda m: f"{m.group(1)}:****@", url or "")
+
+
+def restore_url_password(new: str, old: str) -> str:
+    """Il browser riceve l'indirizzo RTSP con la password oscurata: se lo rimanda così com'è (****),
+    si rimette la password vera di prima (solo se utente e resto dell'indirizzo coincidono)."""
+    m_new, m_old = _URL_PW.match(new or ""), _URL_PW.match(old or "")
+    if not (m_new and m_new.group(2) == "****" and m_old):
+        return new
+    host_new = re.split(r"[/?#]", new[m_new.end():], maxsplit=1)[0].lower()
+    host_old = re.split(r"[/?#]", old[m_old.end():], maxsplit=1)[0].lower()
+    # La password vecchia si rimette solo per lo stesso utente sulla stessa telecamera (IP e porta):
+    # se cambia l'indirizzo, non deve finire a un altro apparecchio.
+    if m_new.group(1) == m_old.group(1) and host_new == host_old:
+        return f"{m_old.group(1)}:{m_old.group(2)}@" + new[m_new.end():]
+    return new
+
+
 def camera_public(c: Camera) -> dict:
-    """Quello che vede il browser: mai la password dell'NVR."""
+    """Quello che vede il browser: mai la password dell'NVR né quella dentro l'indirizzo RTSP."""
     d = c.model_dump()
     d["has_nvr_password"] = bool(d.pop("nvr_password"))
     d["nvr_password"] = ""
     d["disabled"] = c.type == "nvr" and not c.nvr_host.strip()
     if c.type == "nvr":
         d["url"] = stream_url(c, hide_password=True)
+    else:
+        d["url"] = mask_url_password(c.url)
     return d
 
 

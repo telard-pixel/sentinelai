@@ -76,10 +76,19 @@ def port_free(port: int, host="127.0.0.1") -> bool:
             return False
 
 
-def make_app(data_dir: Path, password: str):
+def lan_addresses() -> list:
+    try:
+        return sorted({i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)} | {socket.gethostname().lower()})
+    except OSError:
+        return []
+
+
+def make_app(data_dir: Path, password: str, rete: bool = False):
+    # Solo questi nomi possono chiamare il server: un sito che si finge 127.0.0.1 (DNS rebinding) viene rifiutato.
+    hosts = ["127.0.0.1", "localhost"] + (lan_addresses() if rete else [])
     os.environ.update(MONGO_URL=f"sqlite:///{data_dir.as_posix()}", DB_NAME="sentinelai", DATA_DIR=str(data_dir),
-                      APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="*",
-                      SENTINEL_LOG=str(LOG))
+                      APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="",
+                      ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG))
     sys.path.insert(0, str(BACKEND))
     import server  # noqa: E402  (legge le variabili qui sopra)
     from fastapi.staticfiles import StaticFiles
@@ -121,15 +130,63 @@ def find_browser():
     return None
 
 
+WINDOW_TITLE = "SentinelAI"          # il titolo della pagina è "SentinelAI · Vision Guard"
+_open_lock = threading.Lock()
+_last_open = 0.0
+
+
+def focus_existing_window() -> bool:
+    """Se la finestra di SentinelAI è già aperta la porta davanti (anche se ridotta a icona) e risponde True."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        if user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                if buf.value.startswith(WINDOW_TITLE):
+                    found.append(hwnd)
+                    return False
+        return True
+
+    user32.EnumWindows(each, 0)
+    if not found:
+        return False
+    hwnd = found[0]
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)            # SW_RESTORE
+    # Windows lascia passare in primo piano solo se il processo "ha appena ricevuto un input":
+    # il trucco del tasto ALT premuto e rilasciato sblocca SetForegroundWindow.
+    user32.keybd_event(0x12, 0, 0, 0)
+    user32.keybd_event(0x12, 0, 2, 0)
+    user32.SetForegroundWindow(hwnd)
+    return True
+
+
 def open_window(port: int):
-    url = f"http://127.0.0.1:{port}/"
-    exe = find_browser()
-    if exe:
-        # Finestra a sé (modalità app), con un profilo suo: i permessi della webcam restano salvati.
-        subprocess.Popen([str(exe), f"--app={url}", f"--user-data-dir={DATA / 'finestra'}", "--no-first-run",
-                          "--no-default-browser-check", "--window-size=1440,900"], close_fds=True)
-    else:
-        webbrowser.open(url)
+    """Una sola finestra: doppio clic sull'icona o programma lanciato due volte la portano solo davanti."""
+    global _last_open
+    with _open_lock:
+        if focus_existing_window():
+            return
+        if time.monotonic() - _last_open < 8:
+            return          # la finestra sta ancora aprendo: il secondo clic non ne apre un'altra
+        _last_open = time.monotonic()
+        url = f"http://127.0.0.1:{port}/"
+        exe = find_browser()
+        if exe:
+            # Finestra a sé (modalità app), con un profilo suo: i permessi della webcam restano salvati.
+            subprocess.Popen([str(exe), f"--app={url}", f"--user-data-dir={DATA / 'finestra'}", "--no-first-run",
+                              "--no-default-browser-check", "--window-size=1440,900"], close_fds=True)
+        else:
+            webbrowser.open(url)
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -277,9 +334,14 @@ def main():
         return
     if not port_free(port):
         port = next(p for p in range(port + 1, port + 50) if port_free(p))
-    host = "0.0.0.0" if cfg.get("rete") else "127.0.0.1"
+    rete = bool(cfg.get("rete"))
+    if rete and not cfg.get("password"):
+        # Aperto alla rete senza password = chiunque in casa (o un ospite sul Wi-Fi) comanda le telecamere.
+        log('"rete": true ignorato: serve anche una "password" in config.json')
+        rete = False
+    host = "0.0.0.0" if rete else "127.0.0.1"
     log(f"avvio SentinelAI {VERSION} su {host}:{port}, dati in {DATA}")
-    srv = start_server(make_app(DATA, cfg.get("password", "")), host, port)
+    srv = start_server(make_app(DATA, cfg.get("password", ""), rete), host, port)
     for _ in range(120):
         if health(port):
             break
