@@ -5,7 +5,7 @@ import { CATEGORY, http } from "@/lib/api";
 import HeatmapCard from "@/components/HeatmapCard";
 
 const tip = { contentStyle: { background: "rgb(var(--raised))", border: "1px solid rgb(var(--c-white) / 0.1)", color: "rgb(var(--g200))", fontFamily: "JetBrains Mono", fontSize: 11 } };
-const axis = { stroke: "#6B7280", fontSize: 10, fontFamily: "JetBrains Mono", tickLine: false, axisLine: false };
+const axis = { stroke: "#71717A", fontSize: 10, fontFamily: "JetBrains Mono", tickLine: false, axisLine: false };
 
 function Card({ title, testid, children, className = "" }) {
   return (

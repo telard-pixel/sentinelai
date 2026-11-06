@@ -82,13 +82,13 @@ function drawTrack(ctx, t, W, H) {
   const [x1, y1, x2, y2] = [t.box[0] * W, t.box[1] * H, t.box[2] * W, t.box[3] * H];
   if (t.fixed) {
     // cosa ferma (mai mossa): grigia e tratteggiata, non dà eventi
-    ctx.strokeStyle = "#6B7280";
+    ctx.strokeStyle = "#71717A";
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
     ctx.setLineDash([]);
     ctx.font = "600 10px 'JetBrains Mono', monospace";
-    ctx.fillStyle = "#9CA3AF";
+    ctx.fillStyle = "#A1A1AA";
     ctx.textAlign = "left";
     ctx.fillText(`FERMO · ${t.label}`, x1 + 3, Math.max(11, y1 - 4));
     return;
