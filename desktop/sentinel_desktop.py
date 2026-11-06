@@ -269,6 +269,7 @@ class AppWindow:
         self.close_hint_done = False
         self.tray = None
         self.minimized = False
+        self.session_ending = -1e9    # istante dell'ultimo "Windows si sta spegnendo"
         self.mode = "avvio"           # avvio → webview, oppure edge se WebView2 manca
         self.pending_show = False     # "mostra" arrivato prima che la finestra esistesse
 
@@ -292,7 +293,7 @@ class AppWindow:
         self.window.events.maximized += lambda: setattr(self, "minimized", False)
 
     def on_closing(self):
-        if self.quitting or self.tray is None:
+        if self.quitting or self.tray is None or time.monotonic() - self.session_ending < 20:
             return True      # senza icona vicino all'orologio la X chiude davvero (sennò non si spegnerebbe più)
         # La X nasconde e basta: il server e le telecamere restano accesi (come chiudere Edge prima).
         threading.Thread(target=self.window.hide, daemon=True).start()
@@ -322,7 +323,8 @@ class AppWindow:
             from Microsoft.Win32 import SystemEvents  # pythonnet, già caricato da pywebview
 
             def ending(sender, args):
-                self.quitting = True
+                # non quitting=True: se lo spegnimento viene annullato la X deve tornare a nascondere (agente 104)
+                self.session_ending = time.monotonic()
             SystemEvents.SessionEnding += ending
             self._session_handler = ending
         except Exception:
@@ -595,7 +597,7 @@ def main():
             return
         if win.tray is not None:
             # WebView2 mancante: finestra di Edge, l'icona c'è già e resta finché non si sceglie Esci.
-            if not hidden:
+            if not hidden or win.pending_show:
                 open_window(port)
             while not srv.should_exit:
                 time.sleep(1)

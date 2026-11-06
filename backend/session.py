@@ -18,7 +18,7 @@ from fastapi import WebSocket
 
 import telegram_bot
 from clips import ClipRecorder
-from detection import SURE_HITS, COCO_IT, Tracker, annotated_snapshot, category_of, detector, encode_jpeg, heading_of, line_side, within_segment
+from detection import SURE_HITS, COCO_IT, Tracker, same_spot, annotated_snapshot, category_of, detector, encode_jpeg, heading_of, line_side, within_segment
 from models import HEAT_H, HEAT_W, Camera, Event, Settings, Zone
 
 logger = logging.getLogger(__name__)
@@ -39,16 +39,8 @@ BACKGROUND_SECONDS = 60
 # sicurezza, torna normale. Una traccia persa per pochi secondi passa la sua storia alla nuova (agente di prova 104:
 # una persona ferma in zona, persa per 3 s, diventava "cosa ferma" e la sosta non scattava).
 STATIC_LEARN = 300
-STATIC_IOU = 0.6
+STATIC_LEARN_PERSON = 1800   # per le persone 30 minuti: di notte (IR) una persona vera può restare sotto 0,6
 STATIC_FORGET = 900       # un punto fisso non più visto da 15 minuti si dimentica
-
-
-def box_iou(a, b) -> float:
-    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
-    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    inter = ix * iy
-    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / union if union > 0 else 0.0
 
 
 def local_tz_offset() -> int:
@@ -146,21 +138,21 @@ class StreamSession:
         return out
 
     def update_fixed(self, active, now):
-        self.fixed_spots = [sp for sp in self.fixed_spots if now - sp["seen"] < STATIC_FORGET]
+        self.fixed_spots[:] = [sp for sp in self.fixed_spots if now - sp["seen"] < STATIC_FORGET]
+        self.tracker.spots = self.fixed_spots
         for tr in active:
             if tr.moved or tr.sure_hits >= SURE_HITS:
                 if tr.fixed:
                     logger.info("[%s] %s #%d si è mossa o è sicura: non è più una cosa ferma", self.camera.name, COCO_IT[tr.cls], tr.id)
                 tr.fixed = False
                 continue
-            area = (tr.box[2] - tr.box[0]) * (tr.box[3] - tr.box[1])
-            spot = next((sp for sp in self.fixed_spots if sp["cls"] == tr.cls and box_iou(sp["box"], tr.box) >= STATIC_IOU
-                         and 0.6 <= area / max(1e-9, (sp["box"][2] - sp["box"][0]) * (sp["box"][3] - sp["box"][1])) <= 1.67), None)
-            if spot is None and not tr.fixed and now - tr.born >= STATIC_LEARN:
+            spot = next((sp for sp in self.fixed_spots if sp["cls"] == tr.cls and same_spot(sp["box"], tr.box)), None)
+            learn = STATIC_LEARN_PERSON if tr.cls == 0 else STATIC_LEARN
+            if spot is None and not tr.fixed and now - tr.born >= learn:
                 spot = {"cls": tr.cls, "box": tuple(tr.box), "seen": now}
                 self.fixed_spots.append(spot)
                 logger.info("[%s] %s ferma da %d s nello stesso punto: la tratto come cosa ferma (niente eventi)",
-                            self.camera.name, COCO_IT[tr.cls], STATIC_LEARN)
+                            self.camera.name, COCO_IT[tr.cls], learn)
             if spot is not None:
                 spot["seen"] = now
                 tr.fixed = True

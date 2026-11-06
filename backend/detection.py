@@ -171,6 +171,24 @@ SURE_HITS = 3              # ...se succede in almeno 3 analisi (un riquadro stor
 INHERIT_SECONDS = 10       # una traccia persa da meno di così e ricomparsa lì vicino passa la sua storia alla nuova
 
 
+def box_iou(a, b) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def area_ratio(a, b) -> float:
+    aa, bb = (a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1])
+    return aa / bb if bb > 0 else 0.0
+
+
+def same_spot(spot_box, box) -> bool:
+    """Stesso punto fisso: riquadro sovrapposto e di grandezza simile."""
+    return box_iou(spot_box, box) >= 0.6 and 0.6 <= area_ratio(box, spot_box) <= 1.67
+
+
 def _median(vals):
     v = sorted(vals)
     n = len(v)
@@ -202,8 +220,14 @@ class Track:
         self.crossed = False
 
     def inherit(self, old):
-        """Stessa cosa ripresa dopo una breve perdita: la nuova traccia ne eredita la storia di movimento."""
-        self.first, self.born, self.first_points = old.first, old.born, list(old.first_points)
+        """Stessa cosa ripresa dopo una breve perdita: la nuova traccia ne eredita la storia di movimento e lo
+        stato della linea (2° giro agente 104: senza, chi passava la linea e veniva coperto un attimo era contato
+        due volte). Lo spostamento per transiti e bilancio della linea riparte dall'ultimo punto visto."""
+        self.first = old.history[-1]
+        self.born, self.first_points = old.born, list(old.first_points)
+        for k in ("crossed", "side", "armed", "last_cross", "pending"):
+            if hasattr(old, k):
+                setattr(self, k, getattr(old, k))
         self.moved, self.max_conf = old.moved, max(self.max_conf, old.max_conf)
         self.sure_hits += old.sure_hits
         self.fixed = old.fixed and not self.moved and self.sure_hits < SURE_HITS
@@ -236,6 +260,7 @@ class Tracker:
         self.frame_dt = None      # intervallo medio fra due analisi
         self.last_update = None
         self.gone: list[Track] = []   # tracce scadute da poco (per l'eredità)
+        self.spots: list[dict] = []   # punti fissi della sessione (li aggiorna session.update_fixed)
 
     def update(self, dets, now):
         if self.last_update is not None:
@@ -257,13 +282,18 @@ class Tracker:
             # col tempo, ma al massimo di 2 intervalli di analisi (non 1,5 s: a 10 analisi/s un oggetto nuovo
             # comparso lontano poco dopo non deve prendersi la traccia di uno sparito).
             gate = min(self.MAX_GATE, self.max_dist + max(0.0, min(dt, 2 * fdt) - 0.2) * self.GATE_SPEED)
-            for di, (c, _, _) in enumerate(dets):
+            for di, (c, dconf, dbox) in enumerate(dets):
                 if c != tr.cls:
                     continue
-                d = math.hypot(cents[di][0] - px, cents[di][1] - py)
+                # distanza minore fra posizione prevista e ultima: la velocità stimata dal tremolio di chi sta
+                # fermo non deve portare fuori la previsione (2° giro agente 104)
+                d = min(math.hypot(cents[di][0] - px, cents[di][1] - py), math.hypot(cents[di][0] - lx, cents[di][1] - ly))
                 if d < gate:
-                    # chi si muove ha la precedenza su una "cosa ferma" (persona davanti alla bici appesa)
-                    pairs.append((tr.fixed, d, ti, di))
+                    # Una "cosa ferma" cede il rilevamento a chi si muove se il rilevamento è sicuro (persona davanti
+                    # alla bici appesa) o non è nel suo punto; un rilevamento poco sicuro nel suo punto resta suo
+                    # (2° giro agente 104: chi passava davanti, coperto per 2 analisi, si prendeva la bici).
+                    yields = tr.fixed and (dconf >= SURE_CONF or not same_spot(tr.box, dbox))
+                    pairs.append((yields, d, ti, di))
         pairs.sort()
         used_t, used_d, active = set(), set(), []
         for _, _, ti, di in pairs:
@@ -296,7 +326,11 @@ class Tracker:
             diag = math.hypot(box[2] - box[0], box[3] - box[1])
             near = [(math.hypot(g.history[-1][0] - cents[di][0], g.history[-1][1] - cents[di][1]), g)
                     for g in self.gone if g.cls == c]
-            near = [(d, g) for d, g in near if d < max(0.08, 0.5 * diag)]
+            # solo con riquadro di grandezza simile, e mai se il rilevamento è su un punto fisso (2° giro agente 104:
+            # la bici ferma ereditava la storia della persona che le era stata davanti e tornava a dare allarmi)
+            near = [(d, g) for d, g in near if d < max(0.08, 0.5 * diag) and 0.6 <= area_ratio(box, g.box) <= 1.67]
+            if near and any(sp["cls"] == c and same_spot(sp["box"], box) for sp in self.spots):
+                near = []
             if near:
                 old = min(near, key=lambda x: x[0])[1]
                 tr.inherit(old)
