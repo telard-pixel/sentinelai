@@ -13,6 +13,7 @@ import telegram_bot
 from detection import encode_jpeg
 
 MAX_CLIP_SECONDS = 30
+_SENDING: set = set()   # invii a Telegram in corso (riferimenti tenuti per non perderli)
 CAT_BGR = {"persona": (129, 185, 16), "veicolo": (212, 182, 6), "animale": (11, 158, 245), "oggetto": (182, 114, 244)}
 
 
@@ -134,7 +135,11 @@ class ClipRecorder:
             await self.db.clips.update_one({"id": rec["id"]}, {"$set": {"status": status, "data": data, "duration": duration,
                                                                          "frames": len(rec["frames"]), "size": len(data)}})
             if data:
-                await telegram_bot.send_clip(self.settings, data, rec.get("caption") or "🎬 Clip allarme")
+                # 06/11/2026 (agente di prova): l'invio a Telegram (fino a minuti) non deve far aspettare
+                # Ferma, la modifica della telecamera o l'uscita dal programma.
+                t = asyncio.create_task(telegram_bot.send_clip(self.settings, data, rec.get("caption") or "🎬 Clip allarme"))
+                _SENDING.add(t)
+                t.add_done_callback(_SENDING.discard)
         except Exception:
             await self.db.clips.update_one({"id": rec["id"]}, {"$set": {"status": "failed"}})
 

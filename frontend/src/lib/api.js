@@ -6,6 +6,12 @@ export const BACKEND = (process.env.REACT_APP_BACKEND_URL || window.location.ori
 export const API = `${BACKEND}/api`;
 export const WS_URL = `${BACKEND.replace(/^http/, "ws")}/api/ws/stream`;
 export const http = axios.create({ baseURL: API });
+// 06/11/2026 (agente di prova): con il gettone scaduto a finestra aperta le API davano 401 senza tornare al login.
+http.interceptors.response.use((r) => r, (err) => {
+  if (err.response?.status === 401 && !String(err.config?.url || "").startsWith("/auth/")) window.dispatchEvent(new Event("sentinel-401"));
+  return Promise.reject(err);
+});
+export const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } })();
 export const snapshotUrl = (id) => `${API}/events/${id}/snapshot`;
 
 export const CATEGORY = {

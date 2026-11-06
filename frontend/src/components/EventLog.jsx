@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileSpreadsheet, FileText, Trash2, Siren, Clapperboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { API, CATEGORY, fmtDate, fmtTime, http, snapshotUrl } from "@/lib/api";
+import { API, CATEGORY, TZ, fmtDate, fmtTime, http, snapshotUrl } from "@/lib/api";
 import { DirectionBadge } from "@/components/LiveEvents";
 import { toast } from "sonner";
 
@@ -35,7 +35,7 @@ export default function EventLog({ onOpen }) {
   const { data = [] } = useQuery({ queryKey: ["events", params], queryFn: () => http.get("/events", { params }).then((r) => r.data), refetchInterval: 5000 });
 
   const exportUrl = (format) => {
-    const q = new URLSearchParams({ format, tz_offset: new Date().getTimezoneOffset() });
+    const q = new URLSearchParams({ format, tz_offset: new Date().getTimezoneOffset(), ...(TZ && { tz: TZ }) });
     Object.entries(params).forEach(([k, v]) => k !== "limit" && q.set(k, v));
     return `${API}/events/export?${q}`;
   };

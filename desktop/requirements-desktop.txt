@@ -14,3 +14,5 @@ pystray==0.19.5
 pillow==11.0.0
 pyinstaller==6.11.1
 imageio-ffmpeg==0.5.1
+# fusi orari per zoneinfo su Windows (Europe/Rome con l'ora legale giusta)
+tzdata==2024.2

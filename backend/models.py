@@ -5,9 +5,14 @@ from datetime import datetime, timezone
 from typing import List, Literal, Optional
 from urllib.parse import quote
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel as _PydanticBase, ConfigDict, Field, model_validator
 
 from detection import DEFAULT_CLASSES
+
+class BaseModel(_PydanticBase):
+    # 06/11/2026 (agente di prova): niente NaN/Infinito nei numeri (rompevano il salvataggio).
+    model_config = ConfigDict(allow_inf_nan=False)
+
 
 #: Risoluzione della griglia della mappa di calore (celle).
 HEAT_W, HEAT_H = 64, 36
@@ -28,11 +33,21 @@ class Zone(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(min_length=1)
     enabled: bool = True
-    points: List[List[float]] = Field(min_length=3)
+    points: List[List[float]] = Field(min_length=3, max_length=100)
     categories: List[str] = []
     alert_on_enter: bool = True
     dwell_seconds: int = Field(0, ge=0, le=3600)
     color: str = "#EF4444"
+
+
+    @model_validator(mode="after")
+    def check_points(self):
+        # 06/11/2026 (agente di prova): un punto NaN rompeva il salvataggio (errore 500).
+        import math
+        for p in self.points:
+            if len(p) != 2 or not all(math.isfinite(v) and -0.01 <= v <= 1.01 for v in p):
+                raise ValueError("Punti della zona non validi")
+        return self
 
 
 class CameraIn(BaseModel):
@@ -92,26 +107,66 @@ def stream_url(c: CameraIn, hide_password: bool = False) -> str:
     return f"rtsp://{auth}{c.nvr_host.strip()}:{c.nvr_port}{nvr_path(c)}"
 
 
-_URL_PW = re.compile(r"^([a-z][a-z0-9+.-]*://[^:/@\s]+):([^@\s]*)@", re.I)
+def split_url(url: str):
+    """(schema://, utente, password o None, host[:porta], resto) come urlsplit: l'userinfo arriva fino
+    all'ULTIMA @ prima di / ? #. 06/11/2026 (agente di prova): prima una password con @ o spazi restava
+    visibile in parte o del tutto."""
+    m = re.match(r"^([a-z][a-z0-9+.-]*://)", url or "", re.I)
+    if not m:
+        return None
+    rest = url[m.end():]
+    end = min([i for i in (rest.find("/"), rest.find("?"), rest.find("#")) if i >= 0] or [len(rest)])
+    auth, tail = rest[:end], rest[end:]
+    if "@" not in auth:
+        return m.group(1), None, None, auth, tail
+    userinfo, host = auth.rsplit("@", 1)
+    user, sep, pw = userinfo.partition(":")
+    return m.group(1), user, (pw if sep else None), host, tail
 
 
 def mask_url_password(url: str) -> str:
-    return _URL_PW.sub(lambda m: f"{m.group(1)}:****@", url or "")
+    p = split_url(url)
+    if not p or p[2] is None:
+        return url or ""
+    scheme, user, pw, host, tail = p
+    return f"{scheme}{user}:****@{host}{tail}"
 
 
 def restore_url_password(new: str, old: str) -> str:
-    """Il browser riceve l'indirizzo RTSP con la password oscurata: se lo rimanda così com'è (****),
-    si rimette la password vera di prima (solo se utente e resto dell'indirizzo coincidono)."""
-    m_new, m_old = _URL_PW.match(new or ""), _URL_PW.match(old or "")
-    if not (m_new and m_new.group(2) == "****" and m_old):
+    """Il browser riceve l'indirizzo RTSP con la password oscurata: se lo rimanda con ****, si rimette la
+    password vera, ma solo per lo stesso utente sulla stessa telecamera (IP e porta): mai a un altro apparecchio."""
+    pn, po = split_url(new or ""), split_url(old or "")
+    if not (pn and po and pn[2] == "****" and po[2] is not None):
         return new
-    host_new = re.split(r"[/?#]", new[m_new.end():], maxsplit=1)[0].lower()
-    host_old = re.split(r"[/?#]", old[m_old.end():], maxsplit=1)[0].lower()
-    # La password vecchia si rimette solo per lo stesso utente sulla stessa telecamera (IP e porta):
-    # se cambia l'indirizzo, non deve finire a un altro apparecchio.
-    if m_new.group(1) == m_old.group(1) and host_new == host_old:
-        return f"{m_old.group(1)}:{m_old.group(2)}@" + new[m_new.end():]
+    if pn[0].lower() == po[0].lower() and pn[1] == po[1] and pn[3].lower() == po[3].lower():
+        return f"{pn[0]}{pn[1]}:{po[2]}@{pn[3]}{pn[4]}"
     return new
+
+
+_SCHEME_IN_TEXT = re.compile(r"[a-z][a-z0-9+.-]*://", re.I)
+
+
+def mask_text(text: str) -> str:
+    """Oscura le password di tutti gli indirizzi dentro un testo (registro, messaggi di errore).
+    L'utente e la password possono contenere spazi o @: si prende fino all'ULTIMA @ della riga prima del
+    primo / ? # dopo lo schema, come per gli indirizzi veri."""
+    out, pos, text = [], 0, text or ""
+    for m in _SCHEME_IN_TEXT.finditer(text):
+        if m.start() < pos:
+            continue
+        line_end = text.find("\n", m.end())
+        line_end = len(text) if line_end < 0 else line_end
+        seg = text[m.end():line_end]
+        stops = [i for i in (seg.find("/"), seg.find("?"), seg.find("#")) if i >= 0]
+        auth = seg[:min(stops)] if stops else seg
+        at = auth.rfind("@")
+        if at < 0 or ":" not in auth[:at]:
+            continue
+        user = auth[:at].split(":", 1)[0]
+        out.append(text[pos:m.end()] + f"{user}:****")
+        pos = m.end() + at
+    out.append(text[pos:])
+    return "".join(out)
 
 
 def camera_public(c: Camera) -> dict:

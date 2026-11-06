@@ -34,15 +34,39 @@ DEFAULT_PORT = 8765
 
 DATA.mkdir(parents=True, exist_ok=True)
 LOG = DATA / "sentinelai.log"
-try:
-    if LOG.exists() and LOG.stat().st_size > 5_000_000:   # tiene il registro sotto i 5 MB (più la copia precedente)
-        LOG.replace(LOG.with_suffix(".log.1"))
-except OSError:
-    pass
+PORT_FILE = DATA / "porta.txt"
+LOG_MAX = 5_000_000
+
+
+class RotatingLog:
+    """Registro che resta sotto i 5 MB anche se il programma non si chiude mai (più la copia precedente)."""
+
+    def __init__(self, path):
+        self.path, self.lock = path, threading.Lock()
+        self.f = open(path, "a", encoding="utf-8", buffering=1)
+
+    def write(self, text):
+        with self.lock:
+            try:
+                if self.f.tell() > LOG_MAX:
+                    self.f.close()
+                    self.path.replace(self.path.with_suffix(".log.1"))
+                    self.f = open(self.path, "a", encoding="utf-8", buffering=1)
+            except OSError:
+                pass
+            return self.f.write(text)
+
+    def flush(self):
+        with self.lock:
+            self.f.flush()
+
+    def isatty(self):
+        return False
+
+
 if sys.stdout is None or sys.stderr is None or FROZEN:
     # Nel programma con finestra non c'è console: tutto va nel registro (sennò uvicorn si blocca).
-    _log = open(LOG, "a", encoding="utf-8", buffering=1)
-    sys.stdout = sys.stderr = _log
+    sys.stdout = sys.stderr = RotatingLog(LOG)
 
 
 def log(*a):
@@ -130,7 +154,8 @@ def find_browser():
     return None
 
 
-WINDOW_TITLE = "SentinelAI"          # il titolo della pagina è "SentinelAI · Vision Guard"
+WINDOW_TITLE = "SentinelAI · Vision Guard"   # titolo della pagina = titolo della finestra
+WINDOW_CLASS = "Chrome_WidgetWin_1"          # finestre di Edge/Chrome (non la cartella "SentinelAI" di Esplora file)
 _open_lock = threading.Lock()
 _last_open = 0.0
 
@@ -152,8 +177,11 @@ def focus_existing_window() -> bool:
                 buf = ctypes.create_unicode_buffer(n + 1)
                 user32.GetWindowTextW(hwnd, buf, n + 1)
                 if buf.value.startswith(WINDOW_TITLE):
-                    found.append(hwnd)
-                    return False
+                    cls = ctypes.create_unicode_buffer(64)
+                    user32.GetClassNameW(hwnd, cls, 64)
+                    if cls.value == WINDOW_CLASS:
+                        found.append(hwnd)
+                        return False
         return True
 
     user32.EnumWindows(each, 0)
@@ -311,6 +339,8 @@ def prova(out_file: str) -> int:
         check(len(mp4) > 5000 and mp4[4:8] == b"ftyp", f"clip MP4 H.264: {len(mp4)} byte, {dur} s")
         x = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/events/export?format=xlsx", timeout=20).read()
         check(x[:2] == b"PK", "esportazione Excel")
+        from zoneinfo import ZoneInfo
+        check(ZoneInfo("Europe/Rome") is not None, "fusi orari (Europe/Rome) disponibili")
         lg = get("/api/log?lines=200")
         check(lg["available"] and "YOLOv8 caricato" in lg["text"], "registro leggibile dall'app")
         check(get("/api/monitor") == {}, "nessuna telecamera di rete accesa all'avvio")
@@ -322,18 +352,48 @@ def prova(out_file: str) -> int:
     return 0 if ok else 1
 
 
+_MUTEX = None
+
+
+def single_instance() -> bool:
+    """True se questo è l'unico SentinelAI acceso per l'utente. 06/11/2026 (agente di prova): prima bastava
+    che la porta del config fosse occupata da un altro programma per avere due server sugli stessi dati."""
+    global _MUTEX
+    if os.name != "nt":
+        return True
+    import ctypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateMutexW.restype = ctypes.c_void_p
+    _MUTEX = k32.CreateMutexW(None, False, "Local\\SentinelAI-istanza")
+    return ctypes.get_last_error() != 183   # ERROR_ALREADY_EXISTS
+
+
+def running_port():
+    try:
+        return int(PORT_FILE.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
 def main():
     args = sys.argv[1:]
     if args[:1] == ["--prova"]:
         os._exit(prova(args[1] if len(args) > 1 else "prova.txt"))
     cfg = load_config()
-    port = int(cfg.get("port") or DEFAULT_PORT)
-    if health(port):
-        log("già in esecuzione: apro solo la finestra")
-        open_window(port)
+    if not single_instance():
+        # Già acceso (anche se sta ancora caricando il modello): solo la finestra, nessun secondo server.
+        for _ in range(60):
+            p = running_port()
+            if p and health(p):
+                if "--minimizzato" not in args:
+                    open_window(p)
+                return
+            time.sleep(0.5)
         return
+    port = int(cfg.get("port") or DEFAULT_PORT)
     if not port_free(port):
         port = next(p for p in range(port + 1, port + 50) if port_free(p))
+    PORT_FILE.write_text(str(port))
     rete = bool(cfg.get("rete"))
     if rete and not cfg.get("password"):
         # Aperto alla rete senza password = chiunque in casa (o un ospite sul Wi-Fi) comanda le telecamere.

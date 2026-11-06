@@ -24,8 +24,11 @@ function Stat({ label, value, color, testid }) {
 export default function CameraTile({ camera, onEvents, onResult, onCameraChange, onEdit, expanded, onToggleExpand, compact }) {
   const stream = useStream(onEvents);
   const fileRef = useRef(null);
-  const live = ["live", "connecting"].includes(stream.status.state);
   const Icon = SOURCE_META[camera.type].icon;
+  const isNet = ["rtsp", "nvr"].includes(camera.type);
+  // 06/11/2026 (agente di prova): una telecamera di rete accesa sul server ma che non si collega mostrava solo
+  // "Avvia" e non si poteva più fermare. Ora per RTSP/NVR "Ferma" c'è sempre quando il monitoraggio è acceso.
+  const live = ["live", "connecting"].includes(stream.status.state) || (isNet && camera.monitor);
 
   useEffect(() => onResult(camera.id, stream.result), [camera.id, stream.result, onResult]);
   useEffect(() => () => onResult(camera.id, null), [camera.id, onResult]);
@@ -35,10 +38,13 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
   useEffect(() => stream.stop(), [camera.type, camera.url, camera.device_id]);
 
   const start = (file) => stream.start({ cameraId: camera.id, source: camera.type, deviceId: camera.device_id, file });
-  const onStart = () => (camera.type === "file" ? fileRef.current?.click() : start());
-  // RTSP/NVR: il server le controlla di continuo (anche a finestra chiusa). La finestra si ricollega da sola
-  // se la telecamera è accesa; "Ferma" spegne davvero il monitoraggio sul server.
-  const isNet = ["rtsp", "nvr"].includes(camera.type);
+  // RTSP/NVR: il server le controlla di continuo (anche a finestra chiusa). Avvia = accendi il monitoraggio sul
+  // server (poi la finestra si collega da sola); Ferma = spegnilo davvero.
+  const onStart = () => {
+    if (camera.type === "file") return fileRef.current?.click();
+    if (isNet) return onCameraChange({ ...camera, monitor: true }).catch(() => {});
+    return start();
+  };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (isNet && camera.monitor && !camera.disabled) start(); }, [camera.id, camera.monitor, camera.type, camera.url]);
   const onStop = async () => {

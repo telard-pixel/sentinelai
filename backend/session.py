@@ -24,7 +24,15 @@ from models import HEAT_H, HEAT_W, Camera, Event, Settings, Zone
 logger = logging.getLogger(__name__)
 
 HEAT_FLUSH_SECONDS = 15
+LINE_MARGIN = 0.015       # frazione dell'inquadratura: dentro questa fascia attorno alla linea non si cambia lato
+LINE_COOLDOWN = 1.5       # secondi prima che la stessa traccia possa riattraversare
+ZONE_EXIT_GRACE = 1.5     # secondi fuori dalla zona prima di considerarla davvero uscita
 BACKGROUND_SECONDS = 60
+
+
+def local_tz_offset() -> int:
+    """Come Date.getTimezoneOffset() di JavaScript: UTC - ora locale, in minuti (Italia d'inverno: -60)."""
+    return -round(datetime.now().astimezone().utcoffset().total_seconds() / 60)
 
 
 def in_window(now_hm: str, start: str, end: str) -> bool:
@@ -43,6 +51,12 @@ def match_rule(settings: Settings, category: str, direction: Optional[str], tz_o
     return None
 
 
+def line_distance(line, px, py) -> float:
+    """Distanza con segno dalla linea (stesso segno di line_side), in frazioni dell'inquadratura."""
+    lx, ly = line["x2"] - line["x1"], line["y2"] - line["y1"]
+    return (lx * (py - line["y1"]) - ly * (px - line["x1"])) / (math.hypot(lx, ly) or 1e-9)
+
+
 def point_in_polygon(x: float, y: float, pts) -> bool:
     inside = False
     j = len(pts) - 1
@@ -56,7 +70,10 @@ def point_in_polygon(x: float, y: float, pts) -> bool:
 
 
 class StreamSession:
-    def __init__(self, db, camera: Camera, settings: Settings, tz_offset: int):
+    def __init__(self, db, camera: Camera, settings: Settings, tz_offset: Optional[int]):
+        # tz_offset None = ora locale del computer, ricalcolata (segue l'ora legale senza riavviare).
+        self.auto_tz = tz_offset is None
+        tz_offset = local_tz_offset() if tz_offset is None else tz_offset
         self.db, self.camera, self.settings, self.tz_offset = db, camera, settings, tz_offset
         self.tracker = Tracker()
         self.counts = {"in": 0, "out": 0}
@@ -131,12 +148,19 @@ class StreamSession:
             if not z.enabled or (z.categories and cat not in z.categories):
                 continue
             if not point_in_polygon(bx, by, z.points):
-                state.pop(z.id, None)
+                # 06/11/2026 (agente di prova): chi sta sul bordo entrava e usciva a ogni fotogramma: allarmi
+                # di ingresso a raffica e la sosta non scattava mai. Ora si esce solo dopo ZONE_EXIT_GRACE s fuori.
+                st = state.get(z.id)
+                if st is not None:
+                    st.setdefault("out_since", now)
+                    if now - st["out_since"] >= ZONE_EXIT_GRACE:
+                        state.pop(z.id, None)
                 continue
             active_zones.add(z.id)
             st = state.get(z.id)
             if st is None:
                 st = state[z.id] = {"since": now, "dwell": False, "entered": False}
+            st.pop("out_since", None)
             # 06/11/2026: prima l'allarme partiva solo se al primo istante dentro la zona la traccia era già
             # confermata (3 rilevamenti): chi compariva direttamente nella zona non dava MAI l'allarme.
             if z.alert_on_enter and not st["entered"] and tr.hits >= 3:
@@ -151,6 +175,8 @@ class StreamSession:
     async def process(self, frame):
         s = self.settings
         now = time.monotonic()
+        if self.auto_tz:
+            self.tz_offset = self.recorder.tz_offset = local_tz_offset()
         dets = await asyncio.to_thread(detector.detect, frame, s.conf, s.iou, s.classes)
         active, expired = self.tracker.update(dets, now)
         events, line, active_zones = [], self.camera.line.model_dump(), set()
@@ -163,13 +189,20 @@ class StreamSession:
             await self.check_zones(frame, tr, now, events, active_zones)
             if not line["enabled"]:
                 continue
-            side = line_side(line, cx, cy)
-            if side == 0:
+            # 06/11/2026 (agente di prova): una persona ferma SULLA linea, con il centro che trema di poco,
+            # veniva contata decine di volte (IN/OUT/IN...), con allarmi, clip e Telegram a raffica.
+            # Ora: isteresi (si cambia lato solo allontanandosi di LINE_MARGIN dalla linea) e, per la stessa
+            # traccia, un nuovo passaggio conta solo dopo LINE_COOLDOWN secondi.
+            dist = line_distance(line, cx, cy)
+            if abs(dist) < LINE_MARGIN:
                 continue
-            if tr.side is not None and side != tr.side and within_segment(line, cx, cy):
+            side = 1 if dist > 0 else -1
+            if tr.side is not None and side != tr.side and within_segment(line, cx, cy) \
+                    and now - getattr(tr, "last_cross", -1e9) >= LINE_COOLDOWN:
                 direction = "IN" if (side > 0) != line["invert"] else "OUT"
                 self.counts["in" if direction == "IN" else "out"] += 1
                 tr.crossed = True
+                tr.last_cross = now
                 snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} {direction}")
                 events.append(await self.save_event("attraversamento", tr, direction, snap))
             tr.side = side
@@ -212,7 +245,8 @@ class StreamSession:
 def open_capture(url: str):
     if url.lower().startswith("rtsp"):
         # TCP: con l'UDP i flussi degli NVR perdono pezzi e l'immagine si riempie di macchie grigie.
-        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;5000000")
+        # "timeout" (µs): con l'FFmpeg 5 di OpenCV 4.10 "stimeout" non esiste più e non aveva effetto.
+        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|timeout;10000000")
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap

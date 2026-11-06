@@ -28,7 +28,7 @@ from starlette.middleware.cors import CORSMiddleware
 import telegram_bot
 from auth_local import require_approved, users_router, ws_member
 from detection import COCO_IT, category_of, detector
-from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, restore_url_password, stream_url
+from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, mask_text, restore_url_password, stream_url
 from monitor import Manager
 from session import StreamSession
 
@@ -76,6 +76,13 @@ async def ensure_indexes() -> None:
 
 app = FastAPI(title="SentinelAI Vision Guard")
 manager = Manager(db)
+_cam_locks: dict = {}
+
+
+def cam_lock(camera_id: str) -> asyncio.Lock:
+    """Accendere/spegnere/modificare la stessa telecamera uno alla volta (agente di prova: avvio subito dopo
+    uno stop lasciava monitor=true nel database senza nessun lavoratore acceso)."""
+    return _cam_locks.setdefault(camera_id, asyncio.Lock())
 
 #: Nomi con cui si può chiamare il server (contro il "DNS rebinding": un sito che si finge 127.0.0.1).
 #: Vuoto = qualsiasi (Docker dietro nginx/Tailscale). La versione Windows mette 127.0.0.1,localhost.
@@ -91,25 +98,60 @@ def _hostname(value: str) -> str:
         return ""
 
 
-def request_allowed(headers, method: str = "GET") -> Optional[str]:
-    """None se va bene, altrimenti il motivo del rifiuto. Vale per HTTP e WebSocket."""
-    host = _hostname(headers.get("x-forwarded-host") or headers.get("host", ""))
+#: Origini in più ammesse per i comandi (es. https://sentinel.taile84bd0.ts.net dietro Tailscale serve).
+ALLOWED_ORIGINS = {o.strip().lower().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()}
+DEFAULT_PORTS = {"http": "80", "https": "443", "ws": "80", "wss": "443"}
+
+
+def _netloc(value: str, scheme: str = "http") -> str:
+    """nome:porta normalizzato (porta di default esplicita)."""
+    from urllib.parse import urlsplit
+    try:
+        u = urlsplit(value if "//" in value else f"//{value}")
+        host = (u.hostname or "").lower()
+        port = str(u.port) if u.port else DEFAULT_PORTS.get((u.scheme or scheme).lower(), "80")
+    except ValueError:
+        return ""
+    return f"{host}:{port}" if host else ""
+
+
+def request_allowed(headers, method: str = "GET", scheme: str = "http") -> Optional[str]:
+    """None se va bene, altrimenti il motivo del rifiuto. Vale per HTTP e WebSocket.
+
+    06/11/2026 (agente di prova): si guarda SOLO l'intestazione Host. X-Forwarded-Host la può mettere chiunque
+    (una pagina con DNS rebinding è "stessa origine" e la aggiunge a fetch) e aggirava tutto il controllo."""
+    raw_host = headers.get("host", "")
+    host = _hostname(raw_host)
     if ALLOWED_HOSTS and host not in ALLOWED_HOSTS:
         return "indirizzo non ammesso"
-    origin = headers.get("origin")
+    origin = (headers.get("origin") or "").strip()
     # Le richieste che cambiano qualcosa (e i WebSocket, che il browser manda sempre con Origin) devono
-    # venire dalla pagina dell'app stessa, non da un altro sito.
+    # venire dalla pagina dell'app stessa: stesso schema-nome-porta, non un altro sito né "null".
     if method not in ("GET", "HEAD", "OPTIONS") or headers.get("upgrade", "").lower() == "websocket":
-        if origin and origin != "null" and _hostname(origin) != host and _hostname(origin) not in ALLOWED_HOSTS:
-            return "richiesta da un altro sito"
         if headers.get("sec-fetch-site") == "cross-site":
             return "richiesta da un altro sito"
+        if origin:
+            if origin.lower() == "null":
+                return "origine nascosta (null)"
+            if _netloc(origin) != _netloc(raw_host, scheme) and origin.lower().rstrip("/") not in ALLOWED_ORIGINS:
+                return "richiesta da un altro sito"
     return None
+
+
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    """Errori dei dati inviati, SENZA ripetere il valore ricevuto: con un NaN la risposta stessa andava in
+    errore 500 (06/11/2026, agente di prova)."""
+    detail = [{"loc": list(e.get("loc", ())), "msg": str(e.get("msg", "")), "type": str(e.get("type", ""))} for e in exc.errors()]
+    return Response(json.dumps({"detail": detail}, default=str), status_code=422, media_type="application/json")
 
 
 @app.middleware("http")
 async def guard(request: Request, call_next):
-    why = request_allowed(request.headers, request.method)
+    why = request_allowed(request.headers, request.method, request.url.scheme)
     if why:
         logger.warning("rifiutata %s %s: %s (host=%s origin=%s)", request.method, request.url.path, why,
                        request.headers.get("host"), request.headers.get("origin"))
@@ -131,10 +173,41 @@ async def get_camera(camera_id: str) -> Camera:
     return Camera(**doc)
 
 
-def utc_range_of_day(day: str, tz_offset: int):
+def _zone(tz: Optional[str]):
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(tz)
+        except Exception:
+            return None
+    return None
+
+
+def to_local(ts_iso: str, tz_offset: int, tz: Optional[str] = None) -> datetime:
+    """Ora locale di un evento. 06/11/2026 (agente di prova): con il nome del fuso (es. Europe/Rome) ogni evento
+    usa l'ora legale del SUO giorno; lo spostamento fisso di oggi sbagliava di un'ora gli eventi estivi."""
+    dt = datetime.fromisoformat(ts_iso)
+    z = _zone(tz)
+    return dt.astimezone(z).replace(tzinfo=None) if z else (dt - timedelta(minutes=tz_offset)).replace(tzinfo=None)
+
+
+def utc_range_of_day(day: str, tz_offset: int, tz: Optional[str] = None):
     """Giorno locale (AAAA-MM-GG) -> intervallo UTC. tz_offset è quello di JavaScript (UTC - ora locale, in minuti)."""
-    start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(minutes=tz_offset)
+    z = _zone(tz)
+    d = datetime.strptime(day, "%Y-%m-%d")
+    if z:
+        a = d.replace(tzinfo=z).astimezone(timezone.utc)
+        b = (d + timedelta(days=1)).replace(tzinfo=z).astimezone(timezone.utc)
+        return a.isoformat(), b.isoformat()
+    start = d.replace(tzinfo=timezone.utc) + timedelta(minutes=tz_offset)
     return start.isoformat(), (start + timedelta(days=1)).isoformat()
+
+
+def cell(v):
+    """Contro le formule nel CSV/Excel: un nome che inizia con = + - @ diventerebbe un comando del foglio."""
+    if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + v
+    return v
 
 
 # ---------------------------------------------------------------- pubblico
@@ -187,25 +260,28 @@ async def create_camera(body: CameraIn):
 async def update_camera(camera_id: str, body: CameraIn):
     old = await get_camera(camera_id)
     data = body.model_dump()
-    if not data["nvr_password"]:
-        data["nvr_password"] = old.nvr_password   # campo vuoto = password invariata
+    if not data["nvr_password"] and data["nvr_host"].strip().lower() == old.nvr_host.strip().lower() \
+            and data["nvr_username"] == old.nvr_username and data["nvr_port"] == old.nvr_port:
+        data["nvr_password"] = old.nvr_password   # campo vuoto = password invariata (solo stesso NVR e utente)
     data["url"] = restore_url_password(data["url"], old.url)
     cam = Camera(**data, id=old.id, created_at=old.created_at)
-    await db.cameras.replace_one({"id": camera_id}, cam.model_dump())
-    if cam.type in ("rtsp", "nvr") and cam.monitor:
-        if manager.get(cam.id):
-            manager.reload_camera(cam, await load_settings())
+    async with cam_lock(camera_id):
+        await db.cameras.replace_one({"id": camera_id}, cam.model_dump())
+        if cam.type in ("rtsp", "nvr") and cam.monitor:
+            if manager.get(cam.id):
+                manager.reload_camera(cam, await load_settings())
+            else:
+                manager.ensure(cam, await load_settings())
         else:
-            manager.ensure(cam, await load_settings())
-    else:
-        await manager.stop(cam.id)
+            await manager.stop(cam.id)
     return camera_public(cam)
 
 
 @api.delete("/cameras/{camera_id}")
 async def delete_camera(camera_id: str):
-    await manager.stop(camera_id)
-    r = await db.cameras.delete_one({"id": camera_id})
+    async with cam_lock(camera_id):
+        await manager.stop(camera_id)
+        r = await db.cameras.delete_one({"id": camera_id})
     if not r.deleted_count:
         raise HTTPException(404, "Telecamera non trovata")
     await db.heatmaps.delete_many({"camera_id": camera_id})
@@ -276,12 +352,13 @@ TYPE_IT = {"attraversamento": "Attraversamento", "transito": "Transito", "zona_i
 @api.get("/events/export")
 async def export_events(format: Literal["csv", "xlsx"] = "csv", category: Optional[str] = None,
                         direction: Optional[str] = None, type: Optional[str] = None, hours: Optional[int] = None,
-                        alert_only: bool = False, camera_id: Optional[str] = None, tz_offset: int = 0):
+                        alert_only: bool = False, camera_id: Optional[str] = None, tz_offset: int = 0,
+                        tz: Optional[str] = None):
     q = events_filter(category, direction, type, alert_only, hours, camera_id)
     docs = await db.events.find(q, {"_id": 0}).sort("timestamp", -1).to_list(50000)
     rows = []
     for d in docs:
-        ts = datetime.fromisoformat(d["timestamp"]) - timedelta(minutes=tz_offset)
+        ts = to_local(d["timestamp"], tz_offset, tz)
         rows.append({"Data": ts.strftime("%d/%m/%Y"), "Ora": ts.strftime("%H:%M:%S"), "Telecamera": d.get("camera_name") or "",
                      "Tipo": TYPE_IT.get(d["type"], d["type"]), "Zona": d.get("zone_name") or "",
                      "Categoria": d["category"], "Oggetto": d["class_name"], "Direzione varco": d.get("direction") or "-",
@@ -299,7 +376,7 @@ async def export_events(format: Literal["csv", "xlsx"] = "csv", category: Option
         ws.title = "Eventi"
         ws.append(cols)
         for r in rows:
-            ws.append([r[c] for c in cols])
+            ws.append([cell(r[c]) for c in cols])
         ws.freeze_panes = "A2"
         buf = io.BytesIO()
         wb.save(buf)
@@ -308,7 +385,7 @@ async def export_events(format: Literal["csv", "xlsx"] = "csv", category: Option
     out = io.StringIO()
     w = csv.DictWriter(out, fieldnames=cols, delimiter=";")
     w.writeheader()
-    w.writerows({c: ("" if r[c] is None else r[c]) for c in cols} for r in rows)
+    w.writerows({c: ("" if r[c] is None else cell(r[c])) for c in cols} for r in rows)
     return Response(out.getvalue().encode("utf-8-sig"), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="eventi_{stamp}.csv"'})
 
@@ -376,14 +453,14 @@ async def with_event(clip: dict) -> dict:
 
 
 @api.get("/clips")
-async def list_clips(tz_offset: int = 0, camera_id: Optional[str] = None, day: Optional[str] = None,
+async def list_clips(tz_offset: int = 0, camera_id: Optional[str] = None, day: Optional[str] = None, tz: Optional[str] = None,
                      limit: int = Query(200, ge=1, le=1000)):
     q: dict = {"status": {"$ne": "failed"}}
     if camera_id:
         q["camera_id"] = camera_id
     if day:
         try:
-            a, b = utc_range_of_day(day, tz_offset)
+            a, b = utc_range_of_day(day, tz_offset, tz)
         except ValueError:
             raise HTTPException(422, "Giorno non valido")
         q["timestamp"] = {"$gte": a, "$lt": b}
@@ -392,11 +469,11 @@ async def list_clips(tz_offset: int = 0, camera_id: Optional[str] = None, day: O
 
 
 @api.get("/clips/days")
-async def clip_days(tz_offset: int = 0, camera_id: Optional[str] = None):
+async def clip_days(tz_offset: int = 0, camera_id: Optional[str] = None, tz: Optional[str] = None):
     q: dict = {"status": {"$ne": "failed"}, **({"camera_id": camera_id} if camera_id else {})}
     counts: dict = {}
     async for d in db.clips.find(q, {"_id": 0, "timestamp": 1}):
-        day = (datetime.fromisoformat(d["timestamp"]) - timedelta(minutes=tz_offset)).strftime("%Y-%m-%d")
+        day = to_local(d["timestamp"], tz_offset, tz).strftime("%Y-%m-%d")
         counts[day] = counts.get(day, 0) + 1
     return [{"day": k, "count": v} for k, v in sorted(counts.items(), reverse=True)]
 
@@ -607,11 +684,19 @@ async def stream_ws(ws: WebSocket):
                     continue
                 await ws.send_json({"type": "detections", **(await session.process(frame))})
                 continue
-            data = json.loads(msg.get("text") or "{}")
+            try:
+                data = json.loads(msg.get("text") or "{}")
+            except ValueError:
+                continue                    # messaggio malformato: si ignora, la connessione resta su
+            if not isinstance(data, dict):
+                continue
             kind = data.get("type")
             if kind == "start":
+                cid = data.get("camera_id")
                 try:
-                    camera = await get_camera(data.get("camera_id", ""))
+                    if not isinstance(cid, str):   # solo testo: un oggetto tipo {"$ne": ...} non deve passare
+                        raise HTTPException(404)
+                    camera = await get_camera(cid)
                 except HTTPException:
                     await ws.send_json({"type": "error", "message": "Telecamera non trovata"})
                     continue
@@ -623,16 +708,21 @@ async def stream_ws(ws: WebSocket):
                 if pump:
                     pump.cancel()
                 if camera.type in ("rtsp", "nvr"):
-                    if not camera.monitor:
-                        await db.cameras.update_one({"id": camera.id}, {"$set": {"monitor": True}})
-                        camera.monitor = True
-                    worker = manager.ensure(camera, await load_settings())
+                    async with cam_lock(camera.id):
+                        if not camera.monitor:
+                            await db.cameras.update_one({"id": camera.id}, {"$set": {"monitor": True}})
+                            camera.monitor = True
+                        worker = manager.ensure(camera, await load_settings())
                     queue = worker.attach()
                     st = worker.status
                     await ws.send_json({"type": "ready"} if st["state"] == "live" else {"type": "error", "message": st["message"]})
                     pump = asyncio.create_task(pump_frames(queue))
                 else:
-                    session = StreamSession(db, camera, await load_settings(), int(data.get("tz_offset", 0)))
+                    try:
+                        tzo = int(data.get("tz_offset", 0))
+                    except (TypeError, ValueError):
+                        tzo = 0
+                    session = StreamSession(db, camera, await load_settings(), tzo)
                     await ws.send_json({"type": "ready"})
             elif kind == "reload":
                 with suppress(HTTPException):
@@ -649,6 +739,10 @@ async def stream_ws(ws: WebSocket):
         pass
     except Exception as exc:
         logger.exception("stream error: %s", exc)
+        # 06/11/2026 (agente di prova): dopo un errore la connessione restava aperta e muta (LIVE finto,
+        # niente ricollegamento): ora si chiude, e la finestra si ricollega da sola.
+        with suppress(Exception):
+            await ws.close(code=1011)
     finally:
         # Chiudere la finestra NON ferma le telecamere di rete: smette solo di guardarle.
         if worker and queue:
@@ -667,15 +761,16 @@ class MonitorIn(BaseModel):
 
 @api.post("/cameras/{camera_id}/monitor")
 async def camera_monitor(camera_id: str, body: MonitorIn):
-    cam = await get_camera(camera_id)
-    if cam.type not in ("rtsp", "nvr"):
-        raise HTTPException(400, "Solo le telecamere RTSP/NVR restano sotto controllo da sole")
-    await db.cameras.update_one({"id": camera_id}, {"$set": {"monitor": body.on}})
-    if body.on:
-        cam.monitor = True
-        manager.ensure(cam, await load_settings())
-    else:
-        await manager.stop(camera_id)
+    async with cam_lock(camera_id):
+        cam = await get_camera(camera_id)
+        if cam.type not in ("rtsp", "nvr"):
+            raise HTTPException(400, "Solo le telecamere RTSP/NVR restano sotto controllo da sole")
+        await db.cameras.update_one({"id": camera_id}, {"$set": {"monitor": body.on}})
+        if body.on:
+            cam.monitor = True
+            manager.ensure(cam, await load_settings())
+        else:
+            await manager.stop(camera_id)
     return {"monitor": body.on}
 
 
@@ -694,7 +789,7 @@ async def read_log(lines: int = Query(300, ge=10, le=5000)):
         f.seek(max(0, f.tell() - 400_000))
         tail = f.read().decode("utf-8", "replace").splitlines()[-lines:]
     text = "\n".join(tail)
-    text = re.sub(r"(://[^:/@\s]+:)[^@\s]*@", r"\1****@", text)                 # password negli indirizzi
+    text = mask_text(text)                                                         # password negli indirizzi
     text = re.sub(r"bot\d{5,}:[A-Za-z0-9_-]{20,}", "bot****", text)              # token Telegram
     return {"available": True, "text": text}
 

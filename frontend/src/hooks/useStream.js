@@ -19,6 +19,8 @@ export function useStream(onEvents) {
   const [dims, setDims] = useState({ w: 16, h: 9 });
   const startRef = useRef(null);
   const retryRef = useRef(null);
+  const runRef = useRef(0);
+  const stopRef = useRef(null);   // ogni avvio ha un numero: un avvio vecchio rimasto a metà non lascia connessioni orfane
 
   const sendFrame = useCallback(() => {
     const ws = wsRef.current;
@@ -53,6 +55,7 @@ export function useStream(onEvents) {
 
   const stop = useCallback(() => {
     clearTimeout(retryRef.current);
+    runRef.current += 1;
     const ws = wsRef.current;
     wsRef.current = null;
     if (ws) ws.close();
@@ -90,6 +93,12 @@ export function useStream(onEvents) {
         setStatus({ state: "error", source, error: m.message });
         return;
       }
+      if (m.type === "stopped") {
+        // Monitoraggio spento dal server (Ferma in un'altra finestra): ci si stacca e si rilegge l'elenco.
+        window.dispatchEvent(new Event("sentinel-cameras"));
+        stopRef.current?.();
+        return;
+      }
       if (m.type === "frame") {
         setFrame(`data:image/jpeg;base64,${m.image}`);
         setDims({ w: m.width, h: m.height });
@@ -106,6 +115,7 @@ export function useStream(onEvents) {
   const start = useCallback(
     async ({ cameraId, source, deviceId, file }) => {
       stop();
+      const run = ++runRef.current;
       setSessionId((n) => n + 1);
       setStatus({ state: "connecting", source, error: null });
       const v = videoRef.current;
@@ -127,16 +137,27 @@ export function useStream(onEvents) {
           setDims({ w: v.videoWidth || 16, h: v.videoHeight || 9 });
         }
       } catch (err) {
+        if (run !== runRef.current) return;
         setStatus({ state: "error", source, error: `Sorgente non disponibile: ${err.message}` });
         return;
       }
-      const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent((await getAuthToken()) || "")}`);
+      const token = (await getAuthToken()) || "";
+      if (run !== runRef.current) {           // nel frattempo è partito un altro avvio (o uno stop)
+        mediaRef.current?.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      const ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token)}`);
       wsRef.current = ws;
       ws.onopen = () =>
         ws.send(JSON.stringify({ type: "start", camera_id: cameraId, tz_offset: new Date().getTimezoneOffset() }));
       ws.onmessage = handleMessage(ws, source);
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (wsRef.current !== ws) return;          // chiusa apposta con stop()
+        if (ev.code === 4401) {                    // accesso scaduto: si torna alla pagina di login
+          window.dispatchEvent(new Event("sentinel-401"));
+          setStatus({ state: "error", source, error: "Accesso scaduto: rientra." });
+          return;
+        }
         if (["rtsp", "nvr"].includes(source)) {
           // 06/11/2026: le telecamere di rete le controlla il server; la finestra si ricollega da sola.
           setStatus({ state: "error", source, error: "Connessione al motore persa: mi ricollego…" });
@@ -149,6 +170,7 @@ export function useStream(onEvents) {
     [stop, handleMessage],
   );
   startRef.current = start;
+  stopRef.current = stop;
 
   const send = useCallback((msg) => {
     if (wsRef.current?.readyState === 1) wsRef.current.send(JSON.stringify(msg));

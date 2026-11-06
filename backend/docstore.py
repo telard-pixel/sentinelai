@@ -3,7 +3,9 @@
 Serve alla versione Windows (05/11/2026): niente server MongoDB da installare, tutto in un file.
 Ogni collezione è una tabella (doc JSON + campi binari a parte); i filtri diventano SQL su json_extract.
 Operatori supportati: uguaglianza, $gt/$gte/$lt/$lte/$ne/$in, $regex solo come prefisso ("^...").
-Aggiornamenti: $set, $inc (anche su percorsi con il punto), $push, $setOnInsert; upsert."""
+Aggiornamenti: $set, $inc (anche su percorsi con il punto), $push, $setOnInsert; upsert.
+Limiti noti (06/11/2026, agente di prova; server.py non li usa): l'uguaglianza su un campo lista non cerca
+dentro la lista; i bytes sono ammessi solo al primo livello; niente NaN/Infinito."""
 import asyncio
 import copy
 import json
@@ -61,8 +63,9 @@ def _where(flt: dict, args: list) -> str:
                 elif op == "$regex":
                     if not (isinstance(v, str) and v.startswith("^") and re.fullmatch(r"\^[\w\- ]*", v)):
                         raise NotImplementedError(f"$regex supportato solo come prefisso semplice: {v!r}")
-                    parts.append(f"{col} LIKE ? ESCAPE '\\'")
-                    args.append(v[1:].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+                    # come MongoDB: maiuscole e minuscole contano (LIKE invece non le distingueva)
+                    parts.append(f"(typeof({col}) = 'text' AND substr({col}, 1, ?) = ?)")
+                    args.extend([len(v) - 1, v[1:]])
                 else:
                     raise NotImplementedError(f"operatore non supportato: {op}")
         elif cond is None:
@@ -75,11 +78,17 @@ def _where(flt: dict, args: list) -> str:
     return " AND ".join(parts) if parts else "1"
 
 
+def _json_default(v):
+    if isinstance(v, (bytes, bytearray, memoryview)):
+        raise ValueError("bytes ammessi solo al primo livello del documento")
+    return str(v)   # datetime e simili
+
+
 def _split(doc: dict):
     """I bytes non stanno nel JSON: vanno nella colonna binaria (solo campi di primo livello)."""
     plain = {k: v for k, v in doc.items() if not isinstance(v, (bytes, bytearray, memoryview))}
     binary = {k: bytes(v) for k, v in doc.items() if isinstance(v, (bytes, bytearray, memoryview))}
-    return json.dumps(plain, ensure_ascii=False, default=str), (pickle.dumps(binary) if binary else None)
+    return json.dumps(plain, ensure_ascii=False, default=_json_default, allow_nan=False), (pickle.dumps(binary) if binary else None)
 
 
 def _join(doc_json: str, blob) -> dict:
@@ -94,6 +103,8 @@ def _project(doc: dict, projection):
         return doc
     inc = {k for k, v in projection.items() if v and k != "_id"}
     exc = {k for k, v in projection.items() if not v and k != "_id"}
+    if not inc and not exc and projection.get("_id"):
+        return {"_id": doc["_id"]} if "_id" in doc else {}   # {"_id": 1}: solo l'_id, come MongoDB
     if inc:
         out = {k: doc[k] for k in inc if k in doc}
         if projection.get("_id", 1) and "_id" in doc:
@@ -207,7 +218,14 @@ class Collection:
         doc = dict(doc)
         doc.setdefault("_id", uuid.uuid4().hex)
         j, b = _split(doc)
-        await asyncio.to_thread(self.db._exec, f'INSERT INTO "{self.name}" (doc, bin) VALUES (?, ?)', (j, b))
+        try:
+            await asyncio.to_thread(self.db._exec, f'INSERT INTO "{self.name}" (doc, bin) VALUES (?, ?)', (j, b))
+        except sqlite3.IntegrityError as exc:
+            try:
+                from pymongo.errors import DuplicateKeyError
+            except ImportError:
+                raise
+            raise DuplicateKeyError(str(exc)) from exc
         return SimpleNamespace(inserted_id=doc["_id"])
 
     def _matching(self, flt, one):
@@ -216,7 +234,12 @@ class Collection:
         return self.db._query(self.name, sql, args)
 
     def _seed(self, flt):
-        return {k: copy.deepcopy(v) for k, v in (flt or {}).items() if not isinstance(v, dict)}
+        doc: dict = {}
+        for k, v in (flt or {}).items():
+            if not isinstance(v, dict):
+                parent, last = _get_parent(doc, k, create=True)   # "a.b" -> {"a": {"b": ...}} come MongoDB
+                parent[last] = copy.deepcopy(v)
+        return doc
 
     def _update(self, flt, update, upsert, one):
         with self.db._lock:

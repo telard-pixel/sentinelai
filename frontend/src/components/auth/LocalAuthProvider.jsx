@@ -21,6 +21,11 @@ export default function LocalAuthProvider({ children }) {
   }, []);
 
   useEffect(() => { setTokenGetter(() => token || null); }, [token]);
+  useEffect(() => {
+    const expired = () => { if (config?.password_required) setToken(""); };
+    window.addEventListener("sentinel-401", expired);
+    return () => window.removeEventListener("sentinel-401", expired);
+  }, [config, setToken]);
 
   // Riprova mentre il backend si avvia (il modello YOLO impiega qualche secondo).
   useEffect(() => {

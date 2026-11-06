@@ -4,11 +4,12 @@ import { Clapperboard, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { API, CATEGORY, fmtDate, fmtTime, http, snapshotUrl } from "@/lib/api";
+import { API, CATEGORY, TZ, fmtDate, fmtTime, http, snapshotUrl } from "@/lib/api";
 import ClipPlayer from "@/components/ClipPlayer";
 import { DirectionBadge } from "@/components/LiveEvents";
 
 const tz = new Date().getTimezoneOffset();
+const tzName = TZ ? { tz: TZ } : {};
 const dayLabel = (d) => new Date(`${d}T12:00:00`).toLocaleDateString("it-IT", { weekday: "short", day: "2-digit", month: "long", year: "numeric" });
 
 function Filter({ testid, value, onChange, options }) {
@@ -55,10 +56,10 @@ export default function ClipArchive({ onOpenEvent }) {
   const [open, setOpen] = useState(null);
   const { data: cameras = [] } = useQuery({ queryKey: ["cameras"], queryFn: () => http.get("/cameras").then((r) => r.data) });
   const camParams = camera !== "all" ? { camera_id: camera } : {};
-  const { data: days = [] } = useQuery({ queryKey: ["clip-days", camera], queryFn: () => http.get("/clips/days", { params: { tz_offset: tz, ...camParams } }).then((r) => r.data), refetchInterval: 20000 });
+  const { data: days = [] } = useQuery({ queryKey: ["clip-days", camera], queryFn: () => http.get("/clips/days", { params: { tz_offset: tz, ...tzName, ...camParams } }).then((r) => r.data), refetchInterval: 20000 });
   const { data: clips = [], isLoading } = useQuery({
     queryKey: ["clips", camera, day],
-    queryFn: () => http.get("/clips", { params: { tz_offset: tz, ...camParams, ...(day !== "all" && { day }) } }).then((r) => r.data),
+    queryFn: () => http.get("/clips", { params: { tz_offset: tz, ...tzName, ...camParams, ...(day !== "all" && { day }) } }).then((r) => r.data),
     refetchInterval: 10000,
   });
 

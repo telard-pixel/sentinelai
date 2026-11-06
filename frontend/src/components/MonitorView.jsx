@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Square, Columns2, Columns3, RectangleHorizontal } from "lucide-react";
 import { toast } from "sonner";
@@ -23,6 +23,11 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
   const [editing, setEditing] = useState(null);
   const [results, setResults] = useState({});
   const { data: cameras = [] } = useQuery({ queryKey: ["cameras"], queryFn: () => http.get("/cameras").then((r) => r.data) });
+  useEffect(() => {
+    const refresh = () => qc.invalidateQueries({ queryKey: ["cameras"] });
+    window.addEventListener("sentinel-cameras", refresh);
+    return () => window.removeEventListener("sentinel-cameras", refresh);
+  }, [qc]);
 
   const onResult = useCallback((id, r) => setResults((prev) => {
     const next = { ...prev };

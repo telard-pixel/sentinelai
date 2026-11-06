@@ -68,6 +68,23 @@ jobs:
           Get-Content prova.txt
           if ($p.ExitCode -ne 0) { Write-Error "prova fallita (codice $($p.ExitCode))"; exit 1 }
 
+      - name: Prova istanza unica (avviato due volte = un solo SentinelAI)
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path dist\SentinelAI\SentinelAI.exe).Path
+          Start-Process -FilePath $exe -ArgumentList '--minimizzato'
+          Start-Sleep -Seconds 2
+          Start-Process -FilePath $exe -ArgumentList '--minimizzato'
+          Start-Sleep -Seconds 40
+          $n = @(Get-Process SentinelAI -ErrorAction SilentlyContinue).Count
+          $porta = Get-Content "$env:LOCALAPPDATA\SentinelAI\porta.txt" -ErrorAction SilentlyContinue
+          Write-Host "processi SentinelAI: $n  porta: $porta"
+          $ok = $false
+          try { $ok = (Invoke-RestMethod "http://127.0.0.1:$porta/api/health").status -eq 'ok' } catch {}
+          Get-Content "$env:LOCALAPPDATA\SentinelAI\sentinelai.log" -Tail 15
+          Get-Process SentinelAI -ErrorAction SilentlyContinue | Stop-Process -Force
+          if ($n -ne 1 -or -not $ok) { Write-Error "attesi 1 processo e server vivo (trovati $n, server $ok)"; exit 1 }
+
       # ---------------------------------------------------------------- installer
       - name: Installer (Inno Setup)
         shell: pwsh

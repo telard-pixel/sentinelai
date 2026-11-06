@@ -27,18 +27,32 @@ BACKOFF = (3, 5, 10, 20, 30, 60)
 
 
 def safe_url(url: str) -> str:
-    return re.sub(r"(://[^:/@]+:)[^@]*@", r"\1****@", url)
+    from models import mask_url_password
+    return mask_url_password(url)
 
 
-def local_tz_offset() -> int:
-    """Come Date.getTimezoneOffset() di JavaScript: UTC - ora locale, in minuti (Italia d'inverno: -60)."""
-    return -round(datetime.now().astimezone().utcoffset().total_seconds() / 60)
+from session import local_tz_offset  # noqa: E402,F401  (spostata in session.py)
+
+
+async def open_cancellable(url):
+    """Apre il flusso in un thread. Se nel frattempo arriva Ferma, la connessione aperta in ritardo viene
+    chiusa appena pronta (06/11/2026, agente di prova: restava aperta per sempre)."""
+    fut = asyncio.ensure_future(asyncio.to_thread(open_capture, url))
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        def release(f):
+            if not f.cancelled() and f.exception() is None:
+                f.result().release()
+        fut.add_done_callback(release)
+        raise
 
 
 class CameraWorker:
     def __init__(self, db, camera: Camera, settings):
         self.db, self.camera, self.settings = db, camera, settings
-        self.session = StreamSession(db, camera, settings, local_tz_offset())
+        self.session = StreamSession(db, camera, settings, None)   # None = ora locale, segue l'ora legale
+        self.stopping = False
         self.viewers: set[asyncio.Queue] = set()
         self.status = {"state": "connecting", "message": "Connessione alla telecamera…"}
         self.last: Optional[dict] = None
@@ -79,13 +93,15 @@ class CameraWorker:
             self.restart.set()
 
     async def stop(self):
+        self.stopping = True
         self.task.cancel()
         try:
             await self.task
         except (asyncio.CancelledError, Exception):
             pass
         await asyncio.shield(self.session.close())
-        self.broadcast({"type": "error", "message": "Monitoraggio fermato."})
+        # Tutte le finestre aperte su questa telecamera lo sanno subito (non solo quella che ha premuto Ferma).
+        self.broadcast({"type": "stopped"})
 
     # --- ciclo principale
     async def run(self):
@@ -99,7 +115,7 @@ class CameraWorker:
                 continue
             self.set_status("connecting", f"Connessione a {name}…" if not attempt else f"Ricollegamento a {name} (tentativo {attempt + 1})…")
             logger.info("[%s] apro %s", name, safe_url(url))
-            cap = await asyncio.to_thread(open_capture, url)
+            cap = await open_cancellable(url)
             if not cap.isOpened():
                 await asyncio.to_thread(cap.release)
                 delay = BACKOFF[min(attempt, len(BACKOFF) - 1)]
@@ -118,7 +134,16 @@ class CameraWorker:
             try:
                 while not self.restart.is_set():
                     t0 = time.monotonic()
-                    frame, seq = await asyncio.to_thread(reader.wait, seq, FIRST_FRAME_TIMEOUT if not frames else FRAME_TIMEOUT)
+                    # Attesa a pezzi da 1 s: se intanto cambia l'indirizzo si riparte subito, non dopo 40 s.
+                    limit = FIRST_FRAME_TIMEOUT if not frames else FRAME_TIMEOUT
+                    waited, frame = 0.0, None
+                    while waited < limit and not self.restart.is_set():
+                        frame, seq = await asyncio.to_thread(reader.wait, seq, 1.0)
+                        if frame is not None or not reader.ok:
+                            break
+                        waited += 1.0
+                    if self.restart.is_set():
+                        break
                     if frame is None:
                         reason = ("nessun fotogramma nei primi %d s" % FIRST_FRAME_TIMEOUT if not frames
                                   else "nessun fotogramma da %d s" % FRAME_TIMEOUT) if reader.ok else "la telecamera ha chiuso il flusso"
@@ -174,14 +199,15 @@ class Manager:
 
     def ensure(self, camera: Camera, settings) -> CameraWorker:
         w = self.workers.get(camera.id)
-        if w is None or w.task.done():
+        if w is None or w.task.done() or w.stopping:
             w = self.workers[camera.id] = CameraWorker(self.db, camera, settings)
             logger.info("[%s] monitoraggio avviato", camera.name)
         return w
 
     async def stop(self, camera_id):
-        w = self.workers.pop(camera_id, None)
+        w = self.workers.pop(camera_id, None)   # tolto dalla tabella PRIMA di qualunque await
         if w:
+            w.stopping = True
             await w.stop()
             logger.info("[%s] monitoraggio fermato", w.camera.name)
 
