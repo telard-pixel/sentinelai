@@ -271,9 +271,17 @@ class AppWindow:
 
     def create(self, hidden: bool):
         import webview
+        # Grande ma dentro lo schermo (su un portatile 1366x768 la 1440x900 usciva dai bordi), centrata.
+        w, h, x, y = 1440, 900, None, None
+        try:
+            sc = webview.screens[0]
+            w, h = min(w, int(sc.width * 0.92)), min(h, int(sc.height * 0.88))
+            x, y = sc.x + (sc.width - w) // 2, sc.y + (sc.height - h) // 3
+        except Exception:
+            pass
         self.window = webview.create_window(
-            "SentinelAI", f"http://127.0.0.1:{self.port}/", width=1440, height=900, min_size=(900, 600),
-            hidden=hidden, background_color="#090D14", text_select=True)
+            "SentinelAI", f"http://127.0.0.1:{self.port}/", width=w, height=h, x=x, y=y,
+            min_size=(min(900, w), min(600, h)), hidden=hidden, background_color="#090D14", text_select=True)
         self.window.events.closing += self.on_closing
         self.window.events.loaded += lambda: self.ready.set()
 
