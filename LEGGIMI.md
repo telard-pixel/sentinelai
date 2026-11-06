@@ -83,3 +83,23 @@ pubblica la Release.
 - Le password delle telecamere (NVR e dentro gli indirizzi RTSP) non arrivano mai al browser: si vedono come `****`.
   Lasciando `****` la password resta quella di prima, ma solo per la stessa telecamera (stesso IP e porta).
 - Versione Windows: `"rete": true` funziona solo insieme a una `"password"`.
+
+## Login con Google (facoltativo)
+
+Si entra solo con gli indirizzi Google che metti tu. La password Google la vede solo Google (OAuth 2.0 con PKCE).
+
+**Versione Windows** — una volta sola:
+1. Vai su https://console.cloud.google.com/ → crea un progetto (es. "SentinelAI").
+2. *API e servizi → Schermata consenso OAuth*: tipo **Esterno**, nome app "SentinelAI", la tua email; in *Utenti di prova*
+   aggiungi gli indirizzi che potranno entrare.
+3. *API e servizi → Credenziali → Crea credenziali → ID client OAuth* → tipo **App desktop** → Crea.
+4. Copia *ID client* e *Client secret* in `%LOCALAPPDATA%\SentinelAI\config.json`:
+   ```json
+   "google_client_id": "....apps.googleusercontent.com",
+   "google_client_secret": "....",
+   "google_emails": ["tuoindirizzo@gmail.com"]
+   ```
+5. Esci da SentinelAI (icona vicino all'orologio → Esci) e riaprilo: nella pagina di accesso compare **Accedi con Google**.
+
+**Docker**: client di tipo **Applicazione web** con URI di reindirizzamento `https://<indirizzo>/api/auth/google/callback`,
+poi `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_EMAILS` in `backend/.env`.

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { BACKEND, setTokenGetter } from "@/lib/api";
+import SplashScreen from "@/components/SplashScreen";
 
 // Accesso locale con password unica (05/11/2026), al posto di Clerk.
 const KEY = "sentinelToken";
@@ -48,11 +49,15 @@ export default function LocalAuthProvider({ children }) {
     setToken("");
   }, [setToken]);
 
-  if (failed) return <p style={{ padding: 24 }}>Il server di SentinelAI non risponde. Ricarica la pagina tra qualche secondo.</p>;
-  if (!config) return null;
+  // Un solo logo in apertura per tutto l'avvio (stesso posto nell'albero): non ricomincia quando il server risponde.
   return (
-    <AuthContext.Provider value={{ required: config.password_required, token, setToken, logout }}>
-      {children}
-    </AuthContext.Provider>
+    <>
+      {config && (
+        <AuthContext.Provider value={{ required: config.password_required, google: !!config.google, token, setToken, logout }}>
+          {children}
+        </AuthContext.Provider>
+      )}
+      <SplashScreen ready={!!config} message={failed ? "Il motore non risponde: ricarica la pagina tra qualche secondo." : undefined} />
+    </>
   );
 }

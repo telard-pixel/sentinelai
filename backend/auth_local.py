@@ -12,7 +12,10 @@ import secrets
 import time
 from pathlib import Path
 
+from urllib.parse import quote, urlencode
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 COOKIE = "sentinel_token"
@@ -21,6 +24,17 @@ LOCAL_MEMBER = {"user_id": "locale", "role": "admin", "email": "", "name": "Ammi
 
 users_router = APIRouter(prefix="/api")
 _fails: dict[str, list[float]] = {}
+
+
+def _google() -> tuple:
+    """(client_id, client_secret, indirizzi ammessi) del login con Google; vuoto = spento."""
+    cid = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    emails = {e.strip().lower() for e in os.environ.get("GOOGLE_EMAILS", "").split(",") if e.strip()}
+    return (cid, os.environ.get("GOOGLE_CLIENT_SECRET", "").strip(), emails) if cid else ("", "", set())
+
+
+def login_required() -> bool:
+    return bool(_password() or _google()[0])
 
 
 def _password() -> str:
@@ -80,13 +94,13 @@ def _token_of(request: Request) -> str:
 
 
 async def require_approved(request: Request) -> dict:
-    if _password() and not valid_token(_token_of(request)):
+    if login_required() and not valid_token(_token_of(request)):
         raise HTTPException(401, "Accesso richiesto")
     return LOCAL_MEMBER
 
 
 async def ws_member(token: str) -> dict | None:
-    return LOCAL_MEMBER if not _password() or valid_token(token) else None
+    return LOCAL_MEMBER if not login_required() or valid_token(token) else None
 
 
 class LoginIn(BaseModel):
@@ -95,7 +109,7 @@ class LoginIn(BaseModel):
 
 @users_router.get("/auth/config")
 async def auth_config():
-    return {"password_required": bool(_password())}
+    return {"password_required": login_required(), "password": bool(_password()), "google": bool(_google()[0])}
 
 
 @users_router.post("/auth/login")
@@ -127,7 +141,7 @@ async def login(body: LoginIn, request: Request, response: Response):
 @users_router.post("/auth/logout")
 async def logout(request: Request, response: Response):
     # Esci = tutti i gettoni dati finora smettono di valere (c'è un solo utente).
-    if _password() and valid_token(_token_of(request)):
+    if login_required() and valid_token(_token_of(request)):
         new_generation()
     response.delete_cookie(COOKIE)
     return {"ok": True}
@@ -146,3 +160,76 @@ async def list_users(member: dict = Depends(require_approved)):
 @users_router.patch("/users/{user_id}/role")
 async def set_role(user_id: str, member: dict = Depends(require_approved)):
     raise HTTPException(403, "Con l'accesso locale c'è un solo utente")
+
+
+# ---------------------------------------------------------------- login con Google (06/11/2026)
+# OAuth 2.0 con PKCE e "state", come raccomanda Google per le app installate: la password Google la vede solo
+# Google; a noi arriva un codice che scambiamo per sapere l'email (verificata). Entra solo chi è in GOOGLE_EMAILS.
+GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO = "https://openidconnect.googleapis.com/v1/userinfo"
+_pending: dict[str, dict] = {}
+
+
+def _callback_url(request: Request) -> str:
+    # Host è già controllato dal middleware (nomi ammessi): con la versione Windows è 127.0.0.1:porta,
+    # che Google accetta per i client "App desktop" senza doverlo registrare.
+    scheme = "https" if request.url.scheme == "https" else "http"
+    return f"{scheme}://{request.headers.get('host')}/api/auth/google/callback"
+
+
+def _back(error: str = "", token: str = "") -> RedirectResponse:
+    frag = f"token={quote(token)}" if token else f"errore={quote(error)}"
+    return RedirectResponse(f"/sign-in#{frag}", status_code=302)
+
+
+@users_router.get("/auth/google/start")
+async def google_start(request: Request):
+    cid, _, _ = _google()
+    if not cid:
+        raise HTTPException(404, "Login con Google non configurato")
+    now = time.time()
+    for k in [k for k, v in _pending.items() if v["exp"] < now]:
+        _pending.pop(k, None)
+    if len(_pending) > 50:
+        raise HTTPException(429, "Troppi accessi in corso: riprova tra qualche minuto")
+    state = secrets.token_urlsafe(24)
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    redirect = _callback_url(request)
+    _pending[state] = {"verifier": verifier, "redirect": redirect, "exp": now + 600}
+    q = urlencode({"client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": "openid email profile",
+                   "state": state, "code_challenge": challenge, "code_challenge_method": "S256", "prompt": "select_account"})
+    return RedirectResponse(f"{GOOGLE_AUTH}?{q}", status_code=302)
+
+
+@users_router.get("/auth/google/callback")
+async def google_callback(request: Request, state: str = "", code: str = "", error: str = ""):
+    import httpx
+    p = _pending.pop(state, None)
+    if error:
+        return _back("Accesso con Google annullato")
+    if not p or p["exp"] < time.time() or not code:
+        return _back("Accesso scaduto o non valido: riprova")
+    cid, secret, emails = _google()
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            t = await c.post(GOOGLE_TOKEN, data={"client_id": cid, "client_secret": secret, "code": code,
+                                                 "code_verifier": p["verifier"], "grant_type": "authorization_code",
+                                                 "redirect_uri": p["redirect"]})
+            if t.status_code != 200:
+                return _back("Google ha rifiutato l'accesso (controlla le impostazioni del client)")
+            u = await c.get(GOOGLE_USERINFO, headers={"Authorization": f"Bearer {t.json().get('access_token', '')}"})
+            info = u.json() if u.status_code == 200 else {}
+    except httpx.HTTPError:
+        return _back("Google non risponde: controlla la connessione a internet")
+    email = str(info.get("email", "")).lower()
+    if not email or not info.get("email_verified"):
+        return _back("Indirizzo Google non verificato")
+    if email not in emails:
+        return _back(f"{email} non è tra gli account ammessi")
+    token = make_token()
+    resp = _back(token=token)
+    resp.set_cookie(COOKIE, token, max_age=TOKEN_DAYS * 86400, httponly=True, samesite="lax",
+                    secure=request.url.scheme == "https")
+    return resp

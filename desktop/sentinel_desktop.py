@@ -75,7 +75,9 @@ def log(*a):
 
 def load_config() -> dict:
     p = DATA / "config.json"
-    cfg = {"port": DEFAULT_PORT, "password": "", "rete": False}
+    cfg = {"port": DEFAULT_PORT, "password": "", "rete": False,
+           # Login con Google: client "App desktop" creato su console.cloud.google.com + indirizzi ammessi.
+           "google_client_id": "", "google_client_secret": "", "google_emails": []}
     try:
         cfg.update(json.loads(p.read_text(encoding="utf-8")))
     except (OSError, ValueError):
@@ -107,12 +109,15 @@ def lan_addresses() -> list:
         return []
 
 
-def make_app(data_dir: Path, password: str, rete: bool = False):
+def make_app(data_dir: Path, password: str, rete: bool = False, google: dict = None):
     # Solo questi nomi possono chiamare il server: un sito che si finge 127.0.0.1 (DNS rebinding) viene rifiutato.
     hosts = ["127.0.0.1", "localhost"] + (lan_addresses() if rete else [])
     os.environ.update(MONGO_URL=f"sqlite:///{data_dir.as_posix()}", DB_NAME="sentinelai", DATA_DIR=str(data_dir),
                       APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="",
-                      ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG))
+                      ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG),
+                      GOOGLE_CLIENT_ID=(google or {}).get("google_client_id", "") or "",
+                      GOOGLE_CLIENT_SECRET=(google or {}).get("google_client_secret", "") or "",
+                      GOOGLE_EMAILS=",".join((google or {}).get("google_emails") or []))
     sys.path.insert(0, str(BACKEND))
     import server  # noqa: E402  (legge le variabili qui sopra)
     from fastapi.staticfiles import StaticFiles
@@ -395,13 +400,13 @@ def main():
         port = next(p for p in range(port + 1, port + 50) if port_free(p))
     PORT_FILE.write_text(str(port))
     rete = bool(cfg.get("rete"))
-    if rete and not cfg.get("password"):
-        # Aperto alla rete senza password = chiunque in casa (o un ospite sul Wi-Fi) comanda le telecamere.
-        log('"rete": true ignorato: serve anche una "password" in config.json')
+    if rete and not (cfg.get("password") or cfg.get("google_client_id")):
+        # Aperto alla rete senza login = chiunque in casa (o un ospite sul Wi-Fi) comanda le telecamere.
+        log('"rete": true ignorato: serve anche una "password" o il login con Google in config.json')
         rete = False
     host = "0.0.0.0" if rete else "127.0.0.1"
     log(f"avvio SentinelAI {VERSION} su {host}:{port}, dati in {DATA}")
-    srv = start_server(make_app(DATA, cfg.get("password", ""), rete), host, port)
+    srv = start_server(make_app(DATA, cfg.get("password", ""), rete, cfg), host, port)
     for _ in range(120):
         if health(port):
             break

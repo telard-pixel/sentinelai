@@ -27,12 +27,30 @@ function AuthShell({ children }) {
   );
 }
 
+const GoogleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+    <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.6 5.4 2.6 13.3l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z" />
+    <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.7 6c4.5-4.2 6.9-10.3 6.9-17.7z" />
+    <path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.1C.9 16.6 0 20.2 0 24s.9 7.4 2.6 10.7l7.9-6.1z" />
+    <path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.7-6c-2.2 1.5-5 2.3-8.2 2.3-6.3 0-11.6-4.1-13.5-9.9l-7.9 6.1C6.6 42.6 14.6 48 24 48z" />
+  </svg>
+);
+
 export function SignInPage() {
-  const { required, token, setToken } = useLocalAuth();
+  const { required, google, token, setToken } = useLocalAuth();
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [hasPassword, setHasPassword] = useState(true);
+  // Ritorno dal login con Google: il gettone (o l'errore) arriva dopo il #, che non passa mai dal server.
+  useEffect(() => {
+    const h = new URLSearchParams(window.location.hash.slice(1));
+    if (h.get("token") || h.get("errore")) window.history.replaceState(null, "", window.location.pathname);
+    if (h.get("token")) { setToken(h.get("token")); navigate("/", { replace: true }); }
+    else if (h.get("errore")) setError(h.get("errore"));
+    fetch(`${BACKEND}/api/auth/config`).then((r) => r.json()).then((c) => setHasPassword(!!c.password)).catch(() => {});
+  }, [setToken, navigate]);
   if (!required || token) return <Navigate to="/" replace />;
 
   const submit = async (e) => {
@@ -61,12 +79,20 @@ export function SignInPage() {
           <span className="font-heading text-lg font-bold tracking-[0.12em] text-gray-100">SENTINEL<span className="text-emerald-400">·AI</span></span>
         </div>
         <h2 className="font-heading text-xl font-semibold text-gray-100">Accedi</h2>
-        <Input data-testid="login-password" type="password" autoFocus autoComplete="current-password" value={password}
-          onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="h-10 border-white/10 bg-black/30" />
+        {google && (
+          <a data-testid="login-google" href={`${BACKEND}/api/auth/google/start`} className="google-btn"><GoogleIcon /> Accedi con Google</a>
+        )}
+        {google && hasPassword && <div className="login-sep">oppure</div>}
+        {hasPassword && (
+          <>
+            <Input data-testid="login-password" type="password" autoFocus={!google} autoComplete="current-password" value={password}
+              onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="h-10 border-white/10 bg-black/30" />
+            <Button data-testid="login-submit" type="submit" disabled={busy || !password} className="w-full gap-2 bg-emerald-500 font-mono text-xs uppercase tracking-wider text-[#04130D] hover:bg-emerald-400">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />} Entra
+            </Button>
+          </>
+        )}
         {error && <p data-testid="login-error" className="text-sm text-red-400">{error}</p>}
-        <Button data-testid="login-submit" type="submit" disabled={busy || !password} className="w-full gap-2 bg-emerald-500 font-mono text-xs uppercase tracking-wider text-[#04130D] hover:bg-emerald-400">
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />} Entra
-        </Button>
       </form>
     </AuthShell>
   );
