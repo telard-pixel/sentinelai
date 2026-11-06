@@ -119,7 +119,7 @@ def make_app(data_dir: Path, password: str, rete: bool = False):
     hosts = ["127.0.0.1", "localhost"] + (lan_addresses() if rete else [])
     os.environ.update(MONGO_URL=f"sqlite:///{data_dir.as_posix()}", DB_NAME="sentinelai", DATA_DIR=str(data_dir),
                       APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="",
-                      ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG))
+                      ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG), SENTINEL_RETE="1" if rete else "0")
     sys.path.insert(0, str(BACKEND))
     import server  # noqa: E402  (legge le variabili qui sopra)
     from fastapi.staticfiles import StaticFiles
@@ -359,6 +359,15 @@ def prova(out_file: str) -> int:
     return 0 if ok else 1
 
 
+def stored_password_ok() -> bool:
+    """Password impostata dall'app e valida (un file vuoto o rovinato NON conta: 4° giro dell'agente)."""
+    import re
+    try:
+        return bool(re.fullmatch(r"scrypt\$[0-9a-f]{32}\$[0-9a-f]{64}", (DATA / ".app_password").read_text().strip()))
+    except OSError:
+        return False
+
+
 _MUTEX = None
 
 
@@ -402,7 +411,7 @@ def main():
         port = next(p for p in range(port + 1, port + 50) if port_free(p))
     PORT_FILE.write_text(str(port))
     rete = bool(cfg.get("rete"))
-    if rete and not (cfg.get("password") or (DATA / ".app_password").exists()):
+    if rete and not (cfg.get("password") or stored_password_ok()):
         # Aperto alla rete senza password = chiunque in casa (o un ospite sul Wi-Fi) comanda le telecamere.
         log('"rete": true ignorato: prima imposta una password (Impostazioni → Password di accesso)')
         rete = False

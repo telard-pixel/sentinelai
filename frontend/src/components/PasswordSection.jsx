@@ -17,7 +17,7 @@ export default function PasswordSection() {
   const has = auth.required;
   const save = async (remove = false) => {
     if (!remove && nw !== rep) return toast.error("Le due password nuove non coincidono");
-    if (remove && !window.confirm("Togliere la password? Chiunque apra l'app sul PC entrerà senza password.")) return;
+    if (remove && !window.confirm("Togliere la password? Chiunque apra l'app entrerà senza password.")) return;
     setBusy(true);
     try {
       const r = await http.put("/auth/password", { current: cur, new: remove ? "" : nw }).then((x) => x.data);
@@ -41,7 +41,7 @@ export default function PasswordSection() {
       <Input data-testid="password-new" type="password" autoComplete="new-password" value={nw} onChange={(e) => setNw(e.target.value)} placeholder={has ? "Password nuova (almeno 6 caratteri)" : "Password (almeno 6 caratteri)"} className={inp} />
       <Input data-testid="password-repeat" type="password" autoComplete="new-password" value={rep} onChange={(e) => setRep(e.target.value)} placeholder="Ripeti la password" className={inp} />
       <div className="flex items-center gap-2">
-        <Button data-testid="password-save" size="sm" disabled={busy || nw.length < 6 || (has && !cur)} onClick={() => save(false)} className="h-8 bg-emerald-500 text-xs text-[#04130D] hover:bg-emerald-400">{has ? "Cambia password" : "Imposta password"}</Button>
+        <Button data-testid="password-save" size="sm" disabled={busy || nw.trim().length < 6 || (has && !cur)} onClick={() => save(false)} className="h-8 bg-emerald-500 text-xs text-[#04130D] hover:bg-emerald-400">{has ? "Cambia password" : "Imposta password"}</Button>
         {has && !auth.fromEnv && <Button data-testid="password-remove" size="sm" variant="ghost" disabled={busy || !cur} onClick={() => save(true)} className="h-8 text-xs text-red-400 hover:text-red-300">Togli password</Button>}
       </div>
     </div>

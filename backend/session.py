@@ -28,6 +28,7 @@ LINE_MARGIN = 0.015       # frazione dell'inquadratura: dentro questa fascia att
 LINE_COOLDOWN = 0.4       # secondi prima che la stessa traccia possa riattraversare (i tremolii li filtra LINE_CONFIRM)
 LINE_CONFIRM = 3          # fotogrammi di fila sul lato nuovo per contare un passaggio "lento"...
 LINE_STRONG = 0.045       # ...ma se è già ben oltre la linea (3 margini) basta un fotogramma: niente passaggi veloci persi
+LINE_ARM = 0.07           # un passaggio conta solo se prima l'oggetto è stato DAVVERO lontano dall'altra parte
 ZONE_EXIT_GRACE = 1.5     # secondi fuori dalla zona prima di considerarla davvero uscita
 BACKGROUND_SECONDS = 60
 
@@ -57,6 +58,15 @@ def line_distance(line, px, py) -> float:
     """Distanza con segno dalla linea (stesso segno di line_side), in frazioni dell'inquadratura."""
     lx, ly = line["x2"] - line["x1"], line["y2"] - line["y1"]
     return (lx * (py - line["y1"]) - ly * (px - line["x1"])) / (math.hypot(lx, ly) or 1e-9)
+
+
+def coherent_crossing(line, history, side) -> bool:
+    """Gli ultimi 3 punti della traccia si muovono tutti verso il lato nuovo, per almeno 2 volte LINE_STRONG."""
+    pts = list(history)[-3:]
+    if len(pts) < 3:
+        return False
+    d = [line_distance(line, x, y) * side for x, y in pts]
+    return d[0] < d[1] < d[2] and d[2] - d[0] >= 2 * LINE_STRONG
 
 
 def point_in_polygon(x: float, y: float, pts) -> bool:
@@ -145,6 +155,7 @@ class StreamSession:
     async def _count_crossing(self, frame, tr, side, now, events, inside_segment):
         tr.pending = 0
         tr.side = side
+        tr.armed = side if abs(line_distance(self.camera.line.model_dump(), *tr.history[-1])) >= LINE_ARM else None
         if not inside_segment:
             return
         direction = "IN" if (side > 0) != self.camera.line.invert else "OUT"
@@ -211,11 +222,18 @@ class StreamSession:
             if abs(dist) < LINE_MARGIN:
                 continue
             side = 1 if dist > 0 else -1
+            # 4° giro dell'agente: il tremolio CASUALE di chi sta fermo sulla linea dava ancora conteggi.
+            # "Armato": l'oggetto è stato lontano dalla linea (LINE_ARM) da un lato; solo così il passaggio
+            # verso l'altro lato conta. Dopo un conteggio si disarma finché non è di nuovo lontano.
             if tr.side is None:
                 tr.side = side
+                if abs(dist) >= LINE_ARM:
+                    tr.armed = side
                 continue
             if side == tr.side:
                 tr.pending = 0
+                if abs(dist) >= LINE_ARM:   # si arma solo il lato GIÀ confermato, mai quello verso cui va
+                    tr.armed = side
                 continue
             # 2° giro dell'agente: con tremolii più ampi del margine contava ancora. Ora il lato nuovo deve
             # durare LINE_CONFIRM fotogrammi di fila, e durante il cooldown il lato vecchio resta quello buono
@@ -223,8 +241,13 @@ class StreamSession:
             tr.pending = getattr(tr, "pending", 0) + 1
             # 3° giro dell'agente: con la sola conferma su 3 fotogrammi un'auto veloce (2 fotogrammi oltre la linea)
             # non veniva contata. Ora basta 1 fotogramma se è già ben oltre (LINE_STRONG); i tremolii restano sotto.
-            confirmed = tr.pending >= LINE_CONFIRM or abs(dist) >= LINE_STRONG
+            # 4° giro dell'agente: il fotogramma singolo "forte" contava anche il tremolio ampio (±0,05).
+            # Ora vale solo se gli ultimi 3 punti vanno tutti nella stessa direzione e si spostano davvero.
+            confirmed = tr.pending >= LINE_CONFIRM or (abs(dist) >= LINE_STRONG and coherent_crossing(line, tr.history, side))
             if not confirmed or now - getattr(tr, "last_cross", -1e9) < LINE_COOLDOWN:
+                continue
+            if getattr(tr, "armed", None) != -side:
+                tr.side, tr.pending = side, 0     # cambio di lato senza venire da lontano: non è un passaggio
                 continue
             await self._count_crossing(frame, tr, side, now, events, within_segment(line, cx, cy))
         for tr in expired:

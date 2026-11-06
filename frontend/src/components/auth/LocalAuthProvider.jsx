@@ -22,16 +22,19 @@ export default function LocalAuthProvider({ children }) {
   }, []);
 
   useEffect(() => { setTokenGetter(() => token || null); }, [token]);
-  useEffect(() => {
-    const expired = () => { if (config?.password_required) setToken(""); };
-    window.addEventListener("sentinel-401", expired);
-    return () => window.removeEventListener("sentinel-401", expired);
-  }, [config, setToken]);
 
   const refreshConfig = useCallback(async () => {
     const r = await fetch(`${BACKEND}/api/auth/config`);
     if (r.ok) setConfig(await r.json());
   }, []);
+
+  useEffect(() => {
+    // 4° giro dell'agente: dopo la PRIMA password le altre finestre non sapevano che ora serve: si rilegge la
+    // configurazione e poi si toglie il gettone, così compare la pagina di accesso.
+    const expired = async () => { try { await refreshConfig(); } catch {} setToken(""); };
+    window.addEventListener("sentinel-401", expired);
+    return () => window.removeEventListener("sentinel-401", expired);
+  }, [refreshConfig, setToken]);
 
   // Riprova mentre il backend si avvia (il modello YOLO impiega qualche secondo).
   useEffect(() => {

@@ -90,3 +90,11 @@ Si imposta dall'app: **Impostazioni → Password di accesso** (imposta, cambia o
 Viene salvata come impronta (scrypt), mai in chiaro. Cambiandola o togliendola, tutti i dispositivi già entrati devono
 rientrare. In Docker si può anche mettere `APP_PASSWORD` in `backend/.env` (in quel caso si toglie solo da lì).
 Il login con Google è stato provato e poi tolto (06/11/2026) su richiesta.
+
+Consiglio: almeno 8 caratteri. Contro chi prova password a raffica: 8 errori in 15 minuti bloccano quell'indirizzo, e
+oltre 100 errori in tutto gli indirizzi che hanno già sbagliato passano in coda (1 tentativo ogni 2 secondi per tutti);
+chi è già entrato da quel dispositivo non viene mai frenato.
+
+**Password dimenticata o file rovinato** (es. dopo un calo di corrente): chiudi SentinelAI (icona → Esci), cancella
+`%LOCALAPPDATA%\SentinelAI\.app_password` e riapri: l'app parte senza password e la reimposti. Un file vuoto o rovinato
+non apre MAI l'app senza password: la blocca e lo scrive nel registro.
