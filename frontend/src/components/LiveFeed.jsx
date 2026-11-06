@@ -15,7 +15,7 @@ function HudButton({ testid, active, onClick, icon: Icon, children, compact, ton
   );
 }
 
-const Center = ({ children }) => <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#05080D] p-4">{children}</div>;
+const Center = ({ children }) => <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[#000000] p-4">{children}</div>;
 
 function Hud({ camera, stream, mode, setMode, heat, setHeat, compact, onCameraChange, zoneDraft, finishZone, cancelZone }) {
   const line = camera.line;

@@ -10,7 +10,7 @@ import { useLocalAuth } from "@/components/auth/LocalAuthProvider";
 function AuthShell({ children }) {
   return (
     <div className="flex min-h-screen bg-app">
-      <div className="force-dark relative hidden flex-1 flex-col justify-between overflow-hidden bg-[#090D14] p-12 lg:flex">
+      <div className="force-dark relative hidden flex-1 flex-col justify-between overflow-hidden bg-[#050506] p-12 lg:flex">
         <div className="hud-grid absolute inset-0 opacity-40" />
         <div className="relative flex items-center gap-3">
           <div className="grid h-10 w-10 place-items-center rounded border border-emerald-500/40 bg-emerald-500/10"><ShieldHalf className="h-5 w-5 text-emerald-400" /></div>

@@ -36,7 +36,7 @@ export default function HeatmapCard() {
         <button data-testid="heatmap-reset-button" onClick={reset} title="Azzera" className="rounded p-1.5 text-gray-500 hover:text-red-400"><RotateCcw className="h-4 w-4" /></button>
       </div>
       {id ? (
-        <div className="force-dark relative mx-auto aspect-video max-h-[60vh] w-full overflow-hidden rounded-md bg-[#05080D]">
+        <div className="force-dark relative mx-auto aspect-video max-h-[60vh] w-full overflow-hidden rounded-md bg-[#000000]">
           <img key={`${id}-${bgKey}`} src={`${API}/cameras/${id}/background?t=${bgKey}`} alt="" data-testid="heatmap-background"
             onError={(e) => { e.currentTarget.style.display = "none"; }} className="absolute inset-0 h-full w-full object-fill opacity-60 grayscale" />
           {data && <HeatmapCanvas data={data} opacity={0.85} />}

@@ -17,7 +17,7 @@ export function Logo({ size = 120 }) {
         fill="#10B981" fillOpacity=".12" stroke="url(#sl-g)" strokeWidth="22" strokeLinejoin="round" />
       <path d="M256 70 V436 C174 404 112 340 112 244 V122 Z" fill="#10B981" fillOpacity=".45" />
       <circle className="splash-eye" cx="256" cy="248" r="44" fill="#06B6D4" />
-      <circle cx="256" cy="248" r="18" fill="#090D14" />
+      <circle cx="256" cy="248" r="18" fill="#050506" />
     </svg>
   );
 }

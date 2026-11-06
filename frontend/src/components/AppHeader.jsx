@@ -46,12 +46,11 @@ export default function AppHeader({ tab, setTab, modelOk, alertCount, onSettings
       <nav className="nav-scroll flex min-w-0 gap-1">
         {TABS.map(([id, label]) => (
           <button key={id} data-testid={`nav-tab-${id}`} onClick={() => setTab(id)}
-            className={`relative rounded px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors ${tab === id ? "text-emerald-400" : "text-gray-400 hover:text-gray-100"}`}>
+            className={`nav-tab relative rounded px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider transition-colors ${tab === id ? "nav-tab-on text-emerald-400" : "text-gray-400 hover:text-gray-100"}`}>
             {label}
             {id === "allarmi" && alertCount > 0 && (
               <span data-testid="alert-notification-badge" className="absolute -right-1 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-red-500 px-1 text-[9px] text-[#fff]">{alertCount}</span>
             )}
-            {tab === id && <span className="absolute inset-x-2 -bottom-[11px] h-[2px] bg-emerald-400" />}
           </button>
         ))}
       </nav>

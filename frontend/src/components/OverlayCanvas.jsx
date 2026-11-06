@@ -20,7 +20,7 @@ function drawLine(ctx, line, W, H, editing) {
   ctx.font = "600 12px 'JetBrains Mono', monospace";
   [["IN", "#10B981", sign], ["OUT", "#EF4444", -sign]].forEach(([t, c, s]) => {
     const px = mx + nx * 26 * s, py = my + ny * 26 * s;
-    ctx.fillStyle = "rgba(9,13,20,0.85)";
+    ctx.fillStyle = "rgba(5,5,6,0.85)";
     ctx.fillRect(px - 20, py - 10, 40, 20);
     ctx.strokeStyle = c;
     ctx.lineWidth = 1;
@@ -35,7 +35,7 @@ function drawLine(ctx, line, W, H, editing) {
       ctx.beginPath();
       ctx.arc(x, y, 9, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = "#090D14";
+      ctx.fillStyle = "#050506";
       ctx.textAlign = "center";
       ctx.fillText(t, x, y + 4);
     });
@@ -70,7 +70,7 @@ function drawZone(ctx, z, W, H, active, draft) {
     const w = ctx.measureText(label).width + 10;
     ctx.fillStyle = c;
     ctx.fillRect(x0 * W, y0 * H, w, 16);
-    ctx.fillStyle = "#090D14";
+    ctx.fillStyle = "#050506";
     ctx.textAlign = "left";
     ctx.fillText(label, x0 * W + 5, y0 * H + 11.5);
   }
@@ -110,7 +110,7 @@ function drawTrack(ctx, t, W, H) {
   const w = ctx.measureText(label).width + 10;
   ctx.fillStyle = c;
   ctx.fillRect(x1, Math.max(0, y1 - 18), w, 18);
-  ctx.fillStyle = "#090D14";
+  ctx.fillStyle = "#050506";
   ctx.textAlign = "left";
   ctx.fillText(label, x1 + 5, Math.max(13, y1 - 5));
   if (t.angle !== null) {

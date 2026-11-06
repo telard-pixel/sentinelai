@@ -549,17 +549,17 @@ video {
     color-scheme: dark;
     --c-white: 255 255 255;
     --c-black: 0 0 0;
-    --g100: 243 244 246;
-    --g200: 229 231 235;
-    --g300: 209 213 219;
-    --g400: 156 163 175;
-    --g500: 107 114 128;
-    --s900: 15 23 42;
-    --app: 9 13 20;
-    --raised: 13 19 29;
-    --raised2: 17 24 39;
-    --panel: 15 22 34;
-    --panel-border: rgba(255, 255, 255, 0.08);
+    --g100: 244 244 245;
+    --g200: 228 228 231;
+    --g300: 212 212 216;
+    --g400: 161 161 170;
+    --g500: 113 113 122;
+    --s900: 17 17 19;
+    --app: 5 5 6;
+    --raised: 12 12 13;
+    --raised2: 18 18 20;
+    --panel: 13 13 14;
+    --panel-border: rgba(255, 255, 255, 0.075);
     --panel-shadow: none;
     --em300: 110 231 183;
     --em400: 52 211 153;
@@ -573,22 +573,22 @@ video {
   }
 
   .dark {
-    --background: 216 38% 6%;
-    --foreground: 210 20% 98%;
-    --card: 217 33% 10%;
-    --card-foreground: 210 20% 98%;
-    --popover: 217 33% 10%;
-    --popover-foreground: 210 20% 98%;
+    --background: 240 6% 2%;
+    --foreground: 0 0% 97%;
+    --card: 240 4% 6%;
+    --card-foreground: 0 0% 97%;
+    --popover: 240 4% 7%;
+    --popover-foreground: 0 0% 97%;
     --primary-foreground: 160 80% 5%;
-    --secondary: 217 25% 16%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 217 25% 16%;
-    --muted-foreground: 218 11% 65%;
-    --accent: 217 25% 16%;
-    --accent-foreground: 210 20% 98%;
+    --secondary: 240 4% 12%;
+    --secondary-foreground: 0 0% 97%;
+    --muted: 240 4% 12%;
+    --muted-foreground: 240 4% 64%;
+    --accent: 240 4% 12%;
+    --accent-foreground: 0 0% 97%;
     --destructive: 0 84% 60%;
-    --border: 217 20% 18%;
-    --input: 217 20% 18%;
+    --border: 240 4% 15%;
+    --input: 240 4% 16%;
   }
   * {
   border-color: hsl(var(--border));
@@ -1442,13 +1442,13 @@ video {
 .border-t-transparent {
   border-top-color: transparent;
 }
-.bg-\[\#05080D\] {
+.bg-\[\#000000\] {
   --tw-bg-opacity: 1;
-  background-color: rgb(5 8 13 / var(--tw-bg-opacity, 1));
+  background-color: rgb(0 0 0 / var(--tw-bg-opacity, 1));
 }
-.bg-\[\#090D14\] {
+.bg-\[\#050506\] {
   --tw-bg-opacity: 1;
-  background-color: rgb(9 13 20 / var(--tw-bg-opacity, 1));
+  background-color: rgb(5 5 6 / var(--tw-bg-opacity, 1));
 }
 .bg-accent {
   background-color: hsl(var(--accent));
