@@ -21,6 +21,7 @@ LOCAL_MEMBER = {"user_id": "locale", "role": "admin", "email": "", "name": "Ammi
 
 users_router = APIRouter(prefix="/api")
 _fails: dict[str, list[float]] = {}
+_last_attempt = 0.0
 
 
 # 06/11/2026: la password si può mettere, cambiare o togliere dall'app (Impostazioni). Si salva come impronta
@@ -153,6 +154,14 @@ async def login(body: LoginIn, request: Request, response: Response):
     recent = [t for t in _fails.get(ip, []) if now - t < 900]
     if len(recent) >= 8:
         raise HTTPException(429, "Troppi tentativi: riprova tra qualche minuto")
+    # 3° giro dell'agente: oltre 100 errori in 15 minuti (da tanti indirizzi diversi) tutto il server rallenta:
+    # al massimo un tentativo ogni 5 secondi per tutti. Chi ha la password giusta aspetta qualche secondo, chi
+    # prova password a raffica passa da migliaia a 12 tentativi al minuto.
+    global _last_attempt
+    if sum(1 for v in _fails.values() for t in v if now - t < 900) >= 100:
+        if now - _last_attempt < 5:
+            raise HTTPException(429, "Troppi tentativi: riprova tra qualche secondo")
+    _last_attempt = now
     good = check_password(body.password)
     if not good:
         _fails[ip] = recent + [now]
@@ -163,8 +172,9 @@ async def login(body: LoginIn, request: Request, response: Response):
         raise HTTPException(401, "Password errata")
     _fails.pop(ip, None)
     token = make_token()
+    from server import real_scheme
     response.set_cookie(COOKIE, token, max_age=TOKEN_DAYS * 86400, httponly=True, samesite="lax",
-                        secure=request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https")
+                        secure=real_scheme(request.headers, request.url.scheme) == "https")
     return {"token": token}
 
 

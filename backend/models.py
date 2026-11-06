@@ -165,14 +165,15 @@ def mask_text(text: str) -> str:
             continue
         line_end = text.find("\n", m.end())
         line_end = len(text) if line_end < 0 else line_end
-        seg = text[m.end():line_end]
+        nxt = _SCHEME_IN_TEXT.search(text, m.end(), line_end)   # fino al prossimo indirizzo, non a fine riga
+        seg = text[m.end():nxt.start() if nxt else line_end]
         # fino all'ultima @ della "parola" (prima di uno spazio): la password può contenere / ? # @ e anche spazi
         word = re.split(r"\s", seg, maxsplit=1)[0]
         at = word.rfind("@")
         if at < 0:
             # spazi nella password: cerca l'ultima @ della riga dopo un ":" (utente:pass word@host)
             at = seg.rfind("@")
-            if at < 0 or ":" not in seg[:at] or "://" in seg[:at]:
+            if at < 0 or ":" not in seg[:at]:
                 continue
         if ":" not in seg[:at]:
             continue

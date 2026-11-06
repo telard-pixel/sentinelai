@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 HEAT_FLUSH_SECONDS = 15
 LINE_MARGIN = 0.015       # frazione dell'inquadratura: dentro questa fascia attorno alla linea non si cambia lato
 LINE_COOLDOWN = 0.4       # secondi prima che la stessa traccia possa riattraversare (i tremolii li filtra LINE_CONFIRM)
-LINE_CONFIRM = 3          # fotogrammi di fila sul lato nuovo per contare un passaggio
+LINE_CONFIRM = 3          # fotogrammi di fila sul lato nuovo per contare un passaggio "lento"...
+LINE_STRONG = 0.045       # ...ma se è già ben oltre la linea (3 margini) basta un fotogramma: niente passaggi veloci persi
 ZONE_EXIT_GRACE = 1.5     # secondi fuori dalla zona prima di considerarla davvero uscita
 BACKGROUND_SECONDS = 60
 
@@ -141,6 +142,18 @@ class StreamSession:
             {"camera_id": self.camera.id},
             {"camera_id": self.camera.id, "data": jpeg, "timestamp": datetime.now(timezone.utc).isoformat()}, upsert=True)
 
+    async def _count_crossing(self, frame, tr, side, now, events, inside_segment):
+        tr.pending = 0
+        tr.side = side
+        if not inside_segment:
+            return
+        direction = "IN" if (side > 0) != self.camera.line.invert else "OUT"
+        self.counts["in" if direction == "IN" else "out"] += 1
+        tr.crossed = True
+        tr.last_cross = now
+        snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} {direction}")
+        events.append(await self.save_event("attraversamento", tr, direction, snap))
+
     async def check_zones(self, frame, tr, now, events, active_zones):
         cat = category_of(tr.cls)
         bx, by = (tr.box[0] + tr.box[2]) / 2, tr.box[3]   # base dell'oggetto (i piedi per le persone)
@@ -208,17 +221,12 @@ class StreamSession:
             # durare LINE_CONFIRM fotogrammi di fila, e durante il cooldown il lato vecchio resta quello buono
             # (così un ritorno indietro rapido viene contato, invece di perdersi).
             tr.pending = getattr(tr, "pending", 0) + 1
-            if tr.pending < LINE_CONFIRM or now - getattr(tr, "last_cross", -1e9) < LINE_COOLDOWN:
+            # 3° giro dell'agente: con la sola conferma su 3 fotogrammi un'auto veloce (2 fotogrammi oltre la linea)
+            # non veniva contata. Ora basta 1 fotogramma se è già ben oltre (LINE_STRONG); i tremolii restano sotto.
+            confirmed = tr.pending >= LINE_CONFIRM or abs(dist) >= LINE_STRONG
+            if not confirmed or now - getattr(tr, "last_cross", -1e9) < LINE_COOLDOWN:
                 continue
-            tr.pending = 0
-            tr.side = side
-            if within_segment(line, cx, cy):
-                direction = "IN" if (side > 0) != line["invert"] else "OUT"
-                self.counts["in" if direction == "IN" else "out"] += 1
-                tr.crossed = True
-                tr.last_cross = now
-                snap = await asyncio.to_thread(annotated_snapshot, frame, tr.box, f"{COCO_IT[tr.cls]} {direction}")
-                events.append(await self.save_event("attraversamento", tr, direction, snap))
+            await self._count_crossing(frame, tr, side, now, events, within_segment(line, cx, cy))
         for tr in expired:
             self.zone_state.pop(tr.id, None)
             self.heat_seen.discard(tr.id)
