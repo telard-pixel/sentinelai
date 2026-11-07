@@ -19,14 +19,26 @@ export function newId() {
 // Appunti: navigator.clipboard c'è solo su HTTPS o localhost; altrimenti il vecchio metodo con una casella nascosta.
 export async function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  // Agente 108: una casella aggiunta a document.body perde il fuoco se si è dentro un pannello (Impostazioni) e la
+  // copia "riesce" vuota. Il testo si mette direttamente nell'evento copy; la casella resta dentro il pannello.
+  let done = false;
+  const onCopy = (e) => { e.clipboardData.setData("text/plain", text); e.preventDefault(); done = true; };
+  document.addEventListener("copy", onCopy, true);
+  const host = document.activeElement?.closest?.("[role=dialog]") || document.body;
   const ta = document.createElement("textarea");
   ta.value = text;
   ta.setAttribute("readonly", "");
   ta.style.position = "fixed";
   ta.style.opacity = "0";
-  document.body.appendChild(ta);
+  host.appendChild(ta);
+  ta.focus();
   ta.select();
-  const ok = document.execCommand("copy");
-  document.body.removeChild(ta);
-  if (!ok) throw new Error("il browser non permette di copiare");
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } finally {
+    host.removeChild(ta);
+    document.removeEventListener("copy", onCopy, true);
+  }
+  if (!ok || !done) throw new Error("il browser non permette di copiare: seleziona il testo del registro e premi Ctrl+C");
 }

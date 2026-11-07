@@ -36,9 +36,6 @@ BACKGROUND_SECONDS = 60
 # parte se c'è movimento, se sta seguendo qualcosa che non è "fermo", o comunque ogni IDLE_INTERVAL secondi
 # (chi compare senza muoversi viene trovato lo stesso). Con la scena ferma il consumo crolla.
 IDLE_INTERVAL = 3.0
-# 07/11/2026 (CT 111, misura dal vivo): a scena vuota il controllo periodico costava ~17% di un core; ora ogni 5 s.
-# Il movimento si controlla sempre 5 volte al secondo, quindi chi entra fa partire l'AI subito comunque.
-IDLE_INTERVAL_EMPTY = 5.0
 FOLLOW_SPEED = 0.03       # inquadrature al secondo: sotto è "fermo" (lo si ricontrolla ogni IDLE_INTERVAL)
 # Soglie basse (agente di prova 105): di notte (IR, poco contrasto) e con persone piccole/lontane 18 e 0,0015
 # non scattavano e un allarme si perdeva. Con 8 e 0,0005 nessun allarme perso; rumore del sensore e orologio
@@ -267,8 +264,9 @@ class StreamSession:
         # linea puntuali). Agente di prova 105.
         following = any(not t.fixed and (math.hypot(*t.vel) > FOLLOW_SPEED or t.hits < 3 or t.misses > 0)
                         for t in self.tracker.tracks.values())
-        limit = IDLE_INTERVAL if (self.tracker.tracks or IDLE_INTERVAL < 0) else max(IDLE_INTERVAL, IDLE_INTERVAL_EMPTY)
-        return moving or following or now - self.last_detect >= limit
+        # 07/11/2026: provato ogni 5 s a scena vuota (-9% di un core) ma l'agente 108 ha visto persone piccole e lente
+        # di notte riconosciute fino a 14 s dopo: si resta a 3 s.
+        return moving or following or now - self.last_detect >= IDLE_INTERVAL
 
     async def idle(self, frame, now):
         """Fotogramma senza AI: la clip continua a registrare (pre e post allarme), il resto resta com'è."""
