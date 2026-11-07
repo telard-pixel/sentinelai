@@ -14,6 +14,8 @@ Environment=TZ=Europe/Rome
 Environment=OMP_NUM_THREADS=3
 ExecStart=/opt/sentinelai/venv/bin/python /opt/sentinelai/linux/sentinel_server.py
 Restart=always
+# 1.0.9: file nuovi (database, registro, clip) leggibili solo dal servizio
+UMask=0077
 RestartSec=5
 NoNewPrivileges=true
 ProtectSystem=strict

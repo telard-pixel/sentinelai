@@ -76,7 +76,11 @@ def main():
     ap.add_argument("--dati", default=os.environ.get("SENTINEL_DATI", "/var/lib/SentinelAI"))
     a = ap.parse_args()
     data = Path(a.dati)
-    data.mkdir(parents=True, exist_ok=True)
+    data.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:   # 1.0.9: database (password RTSP) e registro non leggibili dagli altri utenti del CT
+        data.chmod(0o700)
+    except OSError:
+        pass
     # sentinel_desktop calcola DATA da LOCALAPPDATA all'import: lo puntiamo qui (niente ~/AppData su Linux).
     os.environ["LOCALAPPDATA"] = str(data.parent)
     sys.path.insert(0, str(BASE / "desktop"))

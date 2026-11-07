@@ -76,6 +76,10 @@ class CameraIn(BaseModel):
             raise ValueError("Indirizzo NVR non valido")
         if self.type == "rtsp" and not self.url.strip():
             raise ValueError("URL del flusso obbligatorio")
+        # 1.0.9 (revisione di sicurezza): prima qualsiasi schema (file://, http://127.0.0.1/..., concat:) veniva
+        # aperto da FFmpeg: il server leggeva file locali o chiamava servizi interni e le VLAN delle telecamere.
+        if self.type == "rtsp" and not re.match(r"(?i)rtsps?://", self.url.strip()):
+            raise ValueError("L'indirizzo deve iniziare con rtsp:// (o rtsps://)")
         return self
 
 

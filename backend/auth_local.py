@@ -108,8 +108,12 @@ def _secret() -> bytes:
         # Generato una volta e tenuto accanto ai dati, così i login restano validi dopo un riavvio.
         path = _data_file(".app_secret")
         if not path.exists():
-            path.write_text(secrets.token_hex(32))
-            path.chmod(0o600)
+            try:   # creato direttamente con i permessi giusti (prima c'era un attimo in cui era leggibile da tutti)
+                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                with os.fdopen(fd, "w") as f:
+                    f.write(secrets.token_hex(32))
+            except FileExistsError:
+                pass
         s = path.read_text().strip()
     pw = hashlib.sha256(_password().encode()).hexdigest()
     return f"{s}|{pw}|{_generation()}".encode()
@@ -140,7 +144,8 @@ def _token_of(request: Request) -> str:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         return auth[7:]
-    return request.cookies.get(COOKIE) or request.query_params.get("token", "")
+    # 1.0.9: niente più ?token= sulle richieste HTTP (finiva in cronologia e Referer); resta solo per il WebSocket.
+    return request.cookies.get(COOKIE) or ""
 
 
 async def require_approved(request: Request) -> dict:
@@ -203,7 +208,18 @@ def _client_ip(request: Request) -> str:
     # 06/11/2026 (agente di prova): X-Real-IP lo può inventare chiunque. Ci si fida solo se c'è davanti un
     # proxy nostro (Docker con nginx: TRUST_PROXY=1) e la richiesta arriva davvero da lui.
     peer = request.client.host if request.client else "?"
-    return (request.headers.get("x-real-ip") or peer) if os.environ.get("TRUST_PROXY") == "1" else peer
+    if os.environ.get("TRUST_PROXY") == "1":
+        return request.headers.get("x-real-ip") or peer
+    # 1.0.9 (revisione di sicurezza): dietro "tailscale serve" tutte le richieste arrivano da 127.0.0.1, quindi
+    # 8 password sbagliate da un dispositivo bloccavano il login a tutta la tailnet. Tailscale serve aggiunge in
+    # fondo a X-Forwarded-For l'indirizzo vero del dispositivo (100.x): si usa l'ULTIMO valore (i precedenti li può
+    # scrivere chiunque), e solo se la richiesta arriva davvero dal loopback.
+    if peer in ("127.0.0.1", "::1"):
+        fwd = [x.strip() for x in request.headers.get("x-forwarded-for", "").split(",") if x.strip()]
+        who = fwd[-1] if fwd else request.headers.get("tailscale-user-login", "").strip()
+        if who:
+            return f"ts:{who}"[:80]
+    return peer
 
 
 def _signed_by_us(token: str) -> bool:
@@ -260,7 +276,8 @@ async def login(body: LoginIn, request: Request, response: Response):
         record_failure(ip)
         raise HTTPException(401, "Password errata")
     _fails.pop(ip, None)
-    _good_ips[ip] = time.time()
+    if ip not in ("127.0.0.1", "::1"):      # il loopback è di tutti (proxy): non diventa "indirizzo conosciuto"
+        _good_ips[ip] = time.time()
     token = make_token()
     from server import real_scheme
     response.set_cookie(COOKIE, token, max_age=TOKEN_DAYS * 86400, httponly=True, samesite="lax",

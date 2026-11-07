@@ -396,12 +396,23 @@ class StreamSession:
             logger.error("chiusura sessione %s: %s", self.camera.id, exc)
 
 
+_OPEN_LOCK = threading.Lock()
+#: TCP: con l'UDP i flussi degli NVR perdono pezzi e l'immagine si riempie di macchie grigie.
+#: "timeout" (µs): con l'FFmpeg 5 di OpenCV 4.10 "stimeout" non esiste più e non aveva effetto.
+#: protocol_whitelist (1.0.9, revisione di sicurezza): un flusso RTSP non può far aprire a FFmpeg file locali,
+#: http o concat: (prima le opzioni restavano quelle del primo flusso aperto, con setdefault).
+RTSP_OPTIONS = "rtsp_transport;tcp|timeout;10000000|protocol_whitelist;rtsp,rtsps,rtp,tcp,udp,tls"
+
+
 def open_capture(url: str):
-    if url.lower().startswith("rtsp"):
-        # TCP: con l'UDP i flussi degli NVR perdono pezzi e l'immagine si riempie di macchie grigie.
-        # "timeout" (µs): con l'FFmpeg 5 di OpenCV 4.10 "stimeout" non esiste più e non aveva effetto.
-        os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|timeout;10000000")
-    cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
+    # Le opzioni di FFmpeg passano da una variabile d'ambiente letta all'apertura: lucchetto, così un file locale
+    # aperto insieme a una telecamera non prende le opzioni sbagliate.
+    with _OPEN_LOCK:
+        if url.lower().startswith("rtsp"):
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = RTSP_OPTIONS
+        else:
+            os.environ.pop("OPENCV_FFMPEG_CAPTURE_OPTIONS", None)
+        cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
