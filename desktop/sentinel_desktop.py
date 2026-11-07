@@ -160,6 +160,7 @@ def make_app(data_dir: Path, password: str, rete: bool = False):
     os.environ.update(MONGO_URL=f"sqlite:///{data_dir.as_posix()}", DB_NAME="sentinelai", DATA_DIR=str(data_dir),
                       APP_PASSWORD=password, SENTINEL_MODEL_DIR=str(MODELS), CORS_ORIGINS="",
                       ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG), SENTINEL_RETE="1" if rete else "0",
+                      SENTINEL_VERSION=VERSION,
                       SENTINEL_CLIPS_DIR=str(videos_folder()))
     ff = bundled_ffmpeg()
     if ff and not os.environ.get("IMAGEIO_FFMPEG_EXE"):

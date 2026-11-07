@@ -229,6 +229,12 @@ async def root():
     return {"message": "SentinelAI attivo", "model_loaded": detector.model is not None}
 
 
+@api.get("/version")
+async def version():
+    """1.0.10: versione installata, mostrata in fondo alle Impostazioni (solo dopo il login)."""
+    return {"version": os.environ.get("SENTINEL_VERSION", "sviluppo")}
+
+
 @public.get("/health")
 async def health():
     return {"status": "ok", "model": "YOLO11s (locale)", "model_loaded": detector.model is not None}
