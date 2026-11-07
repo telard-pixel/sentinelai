@@ -29,7 +29,7 @@ import clips as clips_mod
 import telegram_bot
 from auth_local import require_approved, users_router, ws_member
 from detection import COCO_IT, category_of, detector
-from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, mask_text, restore_url_password, stream_url
+from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, mask_text, restore_url_password, rtsp_url_allowed, RTSP_URL_ERROR, stream_url
 from monitor import Manager
 from session import StreamSession
 
@@ -266,6 +266,8 @@ async def list_cameras():
 
 @api.post("/cameras")
 async def create_camera(body: CameraIn):
+    if not rtsp_url_allowed(body):
+        raise HTTPException(422, RTSP_URL_ERROR)
     cam = Camera(**body.model_dump())
     await db.cameras.insert_one(cam.model_dump())
     return camera_public(cam)
@@ -280,6 +282,8 @@ async def update_camera(camera_id: str, body: CameraIn):
         data["nvr_password"] = old.nvr_password   # campo vuoto = password invariata (solo stesso NVR e utente)
     data["url"] = restore_url_password(data["url"], old.url)
     cam = Camera(**data, id=old.id, created_at=old.created_at)
+    if not rtsp_url_allowed(cam):
+        raise HTTPException(422, RTSP_URL_ERROR)
     async with cam_lock(camera_id):
         await db.cameras.replace_one({"id": camera_id}, cam.model_dump())
         if cam.type in ("rtsp", "nvr") and cam.monitor:
@@ -917,10 +921,13 @@ async def read_log(lines: int = Query(300, ge=10, le=5000)):
     path = os.environ.get("SENTINEL_LOG", "")
     if not path or not os.path.exists(path):
         return {"available": False, "text": "Registro non disponibile in questa versione (con Docker: docker compose logs backend)."}
-    with open(path, "rb") as f:
-        f.seek(0, 2)
-        f.seek(max(0, f.tell() - 400_000))
-        tail = f.read().decode("utf-8", "replace").splitlines()[-lines:]
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 400_000))
+            tail = f.read().decode("utf-8", "replace").splitlines()[-lines:]
+    except OSError:   # 1.0.9: cartella o file non leggibile = prima errore 500
+        return {"available": False, "text": "Registro non leggibile (controlla i permessi del file sentinelai.log)."}
     text = "\n".join(tail)
     text = mask_text(text)                                                         # password negli indirizzi
     text = re.sub(r"bot\d{5,}:[A-Za-z0-9_-]{20,}", "bot****", text)              # token Telegram

@@ -76,10 +76,6 @@ class CameraIn(BaseModel):
             raise ValueError("Indirizzo NVR non valido")
         if self.type == "rtsp" and not self.url.strip():
             raise ValueError("URL del flusso obbligatorio")
-        # 1.0.9 (revisione di sicurezza): prima qualsiasi schema (file://, http://127.0.0.1/..., concat:) veniva
-        # aperto da FFmpeg: il server leggeva file locali o chiamava servizi interni e le VLAN delle telecamere.
-        if self.type == "rtsp" and not re.match(r"(?i)rtsps?://", self.url.strip()):
-            raise ValueError("L'indirizzo deve iniziare con rtsp:// (o rtsps://)")
         return self
 
 
@@ -96,6 +92,17 @@ def nvr_path(c: CameraIn) -> str:
         return f"/cam/realmonitor?channel={ch}&subtype={0 if main else 1}"
     p = c.nvr_path.strip() or "/"
     return p if p.startswith("/") else "/" + p
+
+
+#: 1.0.9 (revisione di sicurezza): prima qualsiasi schema (file://, http://127.0.0.1/..., concat:) veniva aperto da
+#: FFmpeg: il server leggeva file locali o chiamava servizi interni e le VLAN delle telecamere. Si controlla al
+#: salvataggio (POST/PUT) e all'apertura, NON nel modello: una telecamera vecchia con http:// salvata dalla 1.0.8
+#: deve restare visibile (e modificabile), non mandare in errore l'elenco o l'avvio (agente di prova, giro 2).
+RTSP_URL_ERROR = "L'indirizzo deve iniziare con rtsp:// (o rtsps://)"
+
+
+def rtsp_url_allowed(c: CameraIn) -> bool:
+    return c.type != "rtsp" or bool(re.match(r"(?i)rtsps?://", c.url.strip()))
 
 
 def stream_url(c: CameraIn, hide_password: bool = False) -> str:

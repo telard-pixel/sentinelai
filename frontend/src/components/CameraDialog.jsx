@@ -70,7 +70,7 @@ function SourceFields({ d, setD }) {
       {d.type === "nvr" && <NvrFields d={d} setD={setD} />}
       {d.type === "rtsp" && (
         <Input data-testid="camera-url-input" value={d.url} onChange={(e) => setD({ ...d, url: e.target.value })}
-          placeholder="rtsp://utente:password@192.168.1.20:554/stream1  oppure  http://…/video.mp4" className="h-9 border-white/10 bg-black/30 font-mono text-xs" />
+          placeholder="rtsp://utente:password@192.168.1.20:554/stream1" className="h-9 border-white/10 bg-black/30 font-mono text-xs" />
       )}
       {d.type === "webcam" && (
         <Select value={d.device_id || "default"} onValueChange={(v) => setD({ ...d, device_id: v === "default" ? "" : v })}>

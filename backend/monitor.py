@@ -14,7 +14,7 @@ from typing import Optional
 
 import cv2
 
-from models import Camera, stream_url
+from models import Camera, rtsp_url_allowed, stream_url
 from session import LatestFrame, StreamSession, open_capture
 from detection import encode_jpeg
 
@@ -112,6 +112,10 @@ class CameraWorker:
             name = self.camera.name
             if not url:
                 self.set_status("error", "Telecamera disattivata: manca l'indirizzo.")
+                await self._wait(30)
+                continue
+            if not rtsp_url_allowed(self.camera):   # 1.0.9: telecamere vecchie con http:// o altro
+                self.set_status("error", "Indirizzo non ammesso: deve iniziare con rtsp:// (modifica la telecamera).")
                 await self._wait(30)
                 continue
             self.set_status("connecting", f"Connessione a {name}…" if not attempt else f"Ricollegamento a {name} (tentativo {attempt + 1})…")
