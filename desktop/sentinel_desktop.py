@@ -12,6 +12,7 @@ controllate; "Esci" dall'icona lo spegne. Se WebView2 manca si torna alla finest
 Dati in %LOCALAPPDATA%\\SentinelAI (database, clip, impostazioni, registro)."""
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -295,18 +296,40 @@ def set_autostart(on: bool):
 # ------------------------------------------------------------------ finestra propria (WebView2)
 
 SHOW_EVENT = "Local\\SentinelAI-mostra"   # il secondo avvio lo segnala: la finestra torna davanti
+_APP_WINDOW = [None]   # la finestra per choose_folder (non come attributo di DesktopApi, raggiungibile dalla pagina)
+
+
+def _harden_pywebview():
+    """1.0.9 (revisione di sicurezza): pywebview cerca la funzione chiesta dalla pagina punto per punto, anche nei
+    nomi che iniziano con "_" (es. "choose_folder.__globals__..."): uno script nella pagina poteva arrivare ai moduli
+    Python ed eseguire comandi su Windows. Qui si accettano solo nomi semplici: niente punti, niente "_" iniziale."""
+    import webview.util as wu
+    orig = getattr(wu, "js_bridge_call", None)
+    if orig is None or getattr(orig, "_sentinel_safe", False):
+        return
+
+    def safe_call(window, func_name, param, value_id):
+        name = str(func_name or "")
+        if "." in name or name.startswith("_") or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", name):
+            log(f"finestra: chiamata rifiutata dalla pagina ({name[:40]!r})")
+            return None
+        return orig(window, func_name, param, value_id)
+
+    safe_call._sentinel_safe = True
+    wu.js_bridge_call = safe_call
+    for mod in list(sys.modules.values()):   # moduli già importati con "from webview.util import js_bridge_call"
+        if getattr(mod, "__name__", "").startswith("webview") and getattr(mod, "js_bridge_call", None) is orig:
+            mod.js_bridge_call = safe_call
 
 
 class DesktopApi:
-    """Comandi che la pagina può chiedere al programma (window.pywebview.api.*), solo nella finestra propria."""
-
-    def __init__(self, owner):
-        self._owner = owner
+    """Comandi che la pagina può chiedere al programma (window.pywebview.api.*), solo nella finestra propria.
+    Nessun attributo con riferimenti al programma: la finestra si prende da _APP_WINDOW (vedi _harden_pywebview)."""
 
     def choose_folder(self, current=""):
         import webview
         start = current if current and Path(current).is_dir() else str(videos_folder().parent)
-        res = self._owner.window.create_file_dialog(webview.FOLDER_DIALOG, directory=start)
+        res = _APP_WINDOW[0].window.create_file_dialog(webview.FOLDER_DIALOG, directory=start)
         return res[0] if res else ""
 
     def open_folder(self, path=""):
@@ -350,10 +373,12 @@ class AppWindow:
             x, y = sc.x + (sc.width - w) // 2, sc.y + (sc.height - h) // 3
         except Exception:
             pass
+        _harden_pywebview()
+        _APP_WINDOW[0] = self
         self.window = webview.create_window(
             "SentinelAI", f"http://127.0.0.1:{self.port}/", width=w, height=h, x=x, y=y,
             min_size=(min(900, w), min(600, h)), hidden=hidden, background_color="#090D14", text_select=True,
-            js_api=DesktopApi(self))
+            js_api=DesktopApi())
         self.window.events.closing += self.on_closing
         self.window.events.loaded += lambda: self.ready.set()
         self.window.events.minimized += lambda: setattr(self, "minimized", True)
