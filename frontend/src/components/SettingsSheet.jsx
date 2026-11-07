@@ -53,6 +53,11 @@ export default function SettingsSheet({ open, onOpenChange, settings, onSave }) 
                 <SliderRow testid="clip-pre-slider" label="Secondi prima dell'allarme" value={d.clip_pre_seconds ?? 5} min={1} max={15} step={1} fmt={(v) => `${v}s`} onChange={(v) => setD({ ...d, clip_pre_seconds: v })} />
                 <SliderRow testid="clip-post-slider" label="Secondi dopo l'allarme" value={d.clip_post_seconds ?? 5} min={1} max={20} step={1} fmt={(v) => `${v}s`} onChange={(v) => setD({ ...d, clip_post_seconds: v })} />
                 <p className="text-[11px] text-gray-500">Allarmi ravvicinati vengono uniti nella stessa clip (massimo 30 secondi, secondi precedenti inclusi).</p>
+                <label className="flex items-center justify-between gap-3 text-xs text-gray-300">
+                  Salva anche i fotogrammi puliti (per allenare l'IA)
+                  <Switch data-testid="training-frames-toggle" checked={d.training_frames ?? false} onCheckedChange={(v) => setD({ ...d, training_frames: v })} />
+                </label>
+                <p className="text-[11px] text-gray-500">Durante ogni clip, un fotogramma al secondo senza riquadri, nella cartella dati «addestramento» (massimo 2 GB). Restano solo su questo computer.</p>
               </>
             )}
           </div>

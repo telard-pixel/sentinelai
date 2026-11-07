@@ -11,6 +11,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import json
 import logging
 
 import telegram_bot
@@ -130,6 +131,37 @@ def save_clip_file(settings, data: bytes, camera_name: str, clip_id: str, wall_u
         return None, f"Video non salvato nella cartella ({exc}): resta nel database."
 
 
+TRAIN_EVERY = 1.0          # secondi fra due fotogrammi puliti
+TRAIN_WIDTH = 1280
+TRAIN_MAX_BYTES = 2 * 1024 ** 3
+
+
+def training_dir() -> Path:
+    return Path(os.environ.get("DATA_DIR", ".")).resolve() / "addestramento"
+
+
+def save_training_frames(camera_name: str, clip_id: str, wall_utc: datetime, tz_offset: int, frames) -> str | None:
+    """1.0.11: salva i fotogrammi puliti di una clip (JPEG + riquadri visti dal modello in .json, utili come prima
+    etichettatura). Si ferma oltre TRAIN_MAX_BYTES. Restituisce un avviso o None."""
+    root = training_dir()
+    try:
+        used = sum(f.stat().st_size for f in root.rglob("*") if f.is_file()) if root.exists() else 0
+        if used >= TRAIN_MAX_BYTES:
+            return "Cartella addestramento piena (2 GB): fotogrammi puliti non salvati."
+        local = wall_utc - timedelta(minutes=tz_offset)
+        day = root / _safe(camera_name) / local.strftime("%Y-%m-%d")
+        day.mkdir(parents=True, exist_ok=True)
+        stem = f"{local.strftime('%H%M%S')}_{clip_id[:6]}"
+        for n, (_, jpeg, tracks) in enumerate(frames):
+            (day / f"{stem}_{n:02d}.jpg").write_bytes(jpeg)
+            (day / f"{stem}_{n:02d}.json").write_text(json.dumps(
+                [{k: t.get(k) for k in ("label", "class_id", "conf", "box", "fixed")}
+                 for t in tracks], ensure_ascii=False))
+        return None
+    except OSError as exc:
+        return f"Fotogrammi puliti non salvati ({exc})."
+
+
 def same_place(a, b) -> bool:
     """Stessa cartella o stesso file anche se scritti diversamente (Z:\\ e \\\\nas\\..., link, ..)."""
     try:
@@ -182,6 +214,8 @@ class ClipRecorder:
     def __init__(self, db, camera, settings, tz_offset):
         self.db, self.camera, self.settings, self.tz_offset = db, camera, settings, tz_offset
         self.buffer: deque = deque()
+        self.clean: deque = deque()      # fotogrammi puliti per l'addestramento (solo con training_frames)
+        self.last_clean = -1e9
         self.active = None
         self.tasks: set = set()
 
@@ -202,7 +236,7 @@ class ClipRecorder:
         cid = str(uuid.uuid4())
         frames = list(self.buffer)
         start = frames[0][0] if frames else now
-        self.active = {"id": cid, "frames": frames, "start": start, "until": now + s.clip_post_seconds, "events": [event_id],
+        self.active = {"id": cid, "frames": frames, "clean": list(self.clean), "start": start, "until": now + s.clip_post_seconds, "events": [event_id],
                        "wall": datetime.now(timezone.utc) - timedelta(seconds=max(0.0, now - start))}
         await self.db.clips.insert_one({"id": cid, "status": "recording", "camera_id": self.camera.id, "camera_name": self.camera.name,
                                         "event_ids": [event_id], "timestamp": datetime.now(timezone.utc).isoformat()})
@@ -211,12 +245,24 @@ class ClipRecorder:
     async def push(self, now, frame, tracks):
         if not self.settings.clips_enabled and not self.active:
             self.buffer.clear()
+            self.clean.clear()
             return
         jpeg = await asyncio.to_thread(annotate_frame, frame, tracks, self.caption())
         self.buffer.append((now, jpeg))
         while self.buffer and now - self.buffer[0][0] > self.settings.clip_pre_seconds:
             self.buffer.popleft()
+        clean = None
+        if getattr(self.settings, "training_frames", False) and now - self.last_clean >= TRAIN_EVERY:
+            self.last_clean = now
+            clean = (now, await asyncio.to_thread(encode_jpeg, frame, TRAIN_WIDTH, 90), tracks)
+            self.clean.append(clean)
+        while self.clean and now - self.clean[0][0] > self.settings.clip_pre_seconds:
+            self.clean.popleft()
+        if not getattr(self.settings, "training_frames", False):
+            self.clean.clear()
         if self.active:
+            if clean:
+                self.active["clean"].append(clean)
             self.active["frames"].append((now, jpeg))
             if now >= self.active["until"]:
                 self.finish()
@@ -244,6 +290,11 @@ class ClipRecorder:
             else:
                 fields["data"] = data        # nessuna cartella utilizzabile: come prima, nel database
             await self.db.clips.update_one({"id": rec["id"]}, {"$set": fields})
+            if rec.get("clean"):
+                warn = await asyncio.to_thread(save_training_frames, self.camera.name, rec["id"],
+                                               rec.get("wall") or datetime.now(timezone.utc), self.tz_offset, rec["clean"])
+                if warn:
+                    logger.warning("[%s] %s", self.camera.name, warn)
             if data:
                 # 06/11/2026 (agente di prova): l'invio a Telegram (fino a minuti) non deve far aspettare
                 # Ferma, la modifica della telecamera o l'uscita dal programma.

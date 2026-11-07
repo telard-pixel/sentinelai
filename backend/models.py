@@ -240,6 +240,9 @@ class Settings(BaseModel):
     retention_days: int = Field(30, ge=0, le=3650)
     # 1.0.5: cartella dei video delle clip ("" = predefinita: Video\SentinelAI sul PC, DATA_DIR/clip in Docker)
     clips_folder: str = Field("", max_length=400)
+    # 1.0.11 (07/11/2026, gatti della Sala scambiati per persone): durante ogni clip salva anche fotogrammi PULITI
+    # (senza riquadri) in DATA_DIR/addestramento, per riaddestrare il modello. Spento se non lo si accende.
+    training_frames: bool = False
 
 
 class Event(BaseModel):
