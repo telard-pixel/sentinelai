@@ -55,10 +55,10 @@
 .splash-eye { transform-origin: 256px 248px; animation: splash-blink 3.2s ease-in-out 1s infinite; }
 .splash-title { margin-top: .4rem; font-family: Outfit, sans-serif; font-weight: 700; font-size: 1.9rem; letter-spacing: .14em;
   animation: splash-up .7s ease .25s both; }
-.splash-title span { color: #10B981; }
+.splash-title span { color: #62937B; }
 .splash-sub { font-family: "JetBrains Mono", monospace; font-size: .7rem; letter-spacing: .45em; color: #71717A; animation: splash-up .7s ease .4s both; }
 .splash-bar { margin-top: 1.2rem; width: 180px; height: 3px; border-radius: 3px; background: rgba(255,255,255,.08); overflow: hidden; }
-.splash-bar span { display: block; height: 100%; width: 40%; border-radius: 3px; background: linear-gradient(90deg, #10B981, #06B6D4);
+.splash-bar span { display: block; height: 100%; width: 40%; border-radius: 3px; background: linear-gradient(90deg, #62937B, #06B6D4);
   animation: splash-load 1.2s ease-in-out infinite; }
 .splash-msg { font-family: "JetBrains Mono", monospace; font-size: .7rem; letter-spacing: .08em; color: #A1A1AA; min-height: 1em; }
 @keyframes splash-pop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }

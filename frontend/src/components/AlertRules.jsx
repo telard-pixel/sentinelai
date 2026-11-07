@@ -54,6 +54,9 @@ function RuleRow({ rule, i, onChange, onDelete }) {
 export default function AlertRules({ settings, onSave }) {
   const [draft, setDraft] = useState(settings);
   const [perm, setPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
+  // 1.0.9: su http (es. http://192.168.0.145:8765) il browser non permette le notifiche: prima il tasto
+  // "Abilita" non faceva niente senza dire perché.
+  const secure = typeof window !== "undefined" && window.isSecureContext;
   useEffect(() => setDraft(settings), [settings]);
   if (!draft) return null;
   const rules = draft.alert_rules;
@@ -78,10 +81,16 @@ export default function AlertRules({ settings, onSave }) {
         <label className="flex items-center gap-3 text-sm text-gray-300"><MonitorSmartphone className="h-4 w-4 text-cyan-400" /> Notifiche Windows
           <Switch data-testid="desktop-notify-toggle" className="ml-auto" checked={draft.desktop_notifications} onCheckedChange={(v) => setDraft({ ...draft, desktop_notifications: v })} /></label>
         <div className="flex items-center gap-2 text-xs text-gray-400">
-          Permesso: <span data-testid="notify-permission-status" className="font-mono text-gray-200">{perm === "granted" ? "concesso" : perm === "denied" ? "negato" : "da richiedere"}</span>
-          {perm !== "granted" && <Button data-testid="notify-permission-button" size="sm" variant="outline" className="ml-auto h-7 border-white/10 bg-transparent text-xs" onClick={async () => setPerm(await askNotifyPermission())}>Abilita</Button>}
+          Permesso: <span data-testid="notify-permission-status" className="font-mono text-gray-200">{!secure ? "non disponibile su http" : perm === "granted" ? "concesso" : perm === "denied" ? "negato" : perm === "unsupported" ? "non supportato" : "da richiedere"}</span>
+          {perm !== "granted" && secure && <Button data-testid="notify-permission-button" size="sm" variant="outline" className="ml-auto h-7 border-white/10 bg-transparent text-xs" onClick={async () => setPerm(await askNotifyPermission())}>Abilita</Button>}
         </div>
       </div>
+      {!secure && (
+        <p data-testid="notify-insecure-hint" className="panel p-3 text-xs text-amber-300" style={{ lineHeight: 1.6 }}>
+          Le notifiche del browser funzionano solo se apri SentinelAI con un indirizzo <b>https</b> (per esempio quello di
+          Tailscale) o dal programma sul PC. Con un indirizzo <b>http</b> il browser le blocca: usa Telegram oppure apri l'indirizzo https.
+        </p>
+      )}
       <TelegramPanel draft={draft} setDraft={setDraft} />
       {rules.map((r, i) => (
         <RuleRow key={r.id} rule={r} i={i} onChange={(nr) => setRules(rules.map((x, j) => (j === i ? nr : x)))} onDelete={() => setRules(rules.filter((_, j) => j !== i))} />

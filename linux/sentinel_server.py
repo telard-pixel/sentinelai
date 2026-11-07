@@ -43,6 +43,33 @@ def password_ok(data: Path) -> bool:
         return False
 
 
+class Tee:
+    """Scrive su due flussi: il primo (journal) e il registro su file. Un errore del file non ferma niente."""
+
+    def __init__(self, a, b):
+        self.a, self.b = a, b
+
+    def write(self, text):
+        try:
+            self.b.write(text)
+        except Exception:   # noqa: BLE001 - il registro non deve mai fermare il servizio
+            pass
+        return self.a.write(text)
+
+    def flush(self):
+        for f in (self.a, self.b):
+            try:
+                f.flush()
+            except Exception:   # noqa: BLE001
+                pass
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        return self.a.fileno()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--porta", type=int, default=int(os.environ.get("SENTINEL_PORTA", 8765)))
@@ -64,12 +91,22 @@ def main():
     clips = Path(os.environ.get("SENTINEL_VIDEO", data / "video"))
     d.videos_folder = lambda: clips      # cartella predefinita dei video; dall'app se ne può scegliere un'altra
     os.environ["SENTINEL_LOG"] = str(data / "sentinelai.log")
+    # 1.0.9: su Linux tutto andava solo nel journal e Impostazioni -> "Copia registro" diceva "non disponibile".
+    # Ora ogni riga va sia nel journal (come prima) sia nel file del registro, che ruota a 5 MB come su Windows.
+    rlog = d.RotatingLog(data / "sentinelai.log")
+    sys.stdout, sys.stderr = Tee(sys.stdout, rlog), Tee(sys.stderr, rlog)
 
     rete = password_ok(data)
     host = "0.0.0.0" if rete else "127.0.0.1"
     if not rete:
         d.log("nessuna password: resto su 127.0.0.1 (impostala con imposta-password.py, poi riavvia il servizio)")
     app = d.make_app(data, "", rete)
+    # i gestori di logging creati prima (server, monitor) scrivono ancora sul vecchio stderr: li si sposta sul Tee
+    import logging
+    for lg in [logging.getLogger()] + [logging.getLogger(n) for n in list(logging.root.manager.loggerDict)]:
+        for h in getattr(lg, "handlers", []):
+            if isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in (sys.stdout.a, sys.stderr.a):
+                h.setStream(sys.stderr)
     d.log(f"avvio SentinelAI {d.VERSION} su {host}:{a.porta}, dati in {data}, nomi ammessi: {', '.join(lan_ipv4())}")
     import uvicorn
     uvicorn.run(app, host=host, port=a.porta, log_level="warning", ws_max_size=4 * 1024 * 1024)

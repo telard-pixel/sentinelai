@@ -41,7 +41,7 @@ export default function HeatmapCard() {
             onError={(e) => { e.currentTarget.style.display = "none"; }} className="absolute inset-0 h-full w-full object-fill opacity-60 grayscale" />
           {data && <HeatmapCanvas data={data} opacity={0.85} />}
           <div className="absolute bottom-2 left-2 flex items-center gap-2 rounded bg-black/70 px-2 py-1 font-mono text-[10px] text-gray-300">
-            <span>poco</span><span className="h-2 w-24 rounded" style={{ background: "linear-gradient(90deg,#06B6D4,#10B981,#F59E0B,#EF4444)" }} /><span>molto</span>
+            <span>poco</span><span className="h-2 w-24 rounded" style={{ background: "linear-gradient(90deg,#06B6D4,#62937B,#F59E0B,#EF4444)" }} /><span>molto</span>
             <span className="ml-2 text-gray-500" data-testid="heatmap-total">{data?.total ?? 0} passaggi</span>
           </div>
           {data && data.total === 0 && <p className="absolute inset-0 grid place-items-center"><span className="rounded bg-black/70 px-3 py-1.5 text-sm text-gray-200">Nessun percorso registrato: avvia il monitoraggio di questa telecamera.</span></p>}

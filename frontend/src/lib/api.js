@@ -15,7 +15,7 @@ export const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().
 export const snapshotUrl = (id) => `${API}/events/${id}/snapshot`;
 
 export const CATEGORY = {
-  persona: { label: "Persone", color: "#10B981" },
+  persona: { label: "Persone", color: "#62937B" },
   veicolo: { label: "Veicoli", color: "#06B6D4" },
   animale: { label: "Animali", color: "#F59E0B" },
   oggetto: { label: "Oggetti", color: "#F472B6" },

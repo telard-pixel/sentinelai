@@ -9,13 +9,13 @@ export function Logo({ size = 120 }) {
     <svg width={size} height={size} viewBox="0 0 512 512" aria-hidden="true">
       <defs>
         <linearGradient id="sl-g" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#34D399" />
-          <stop offset="100%" stopColor="#059669" />
+          <stop offset="0%" stopColor="#86B098" />
+          <stop offset="100%" stopColor="#4A7A63" />
         </linearGradient>
       </defs>
       <path className="splash-shield" d="M256 70 L400 122 V244 C400 340 338 404 256 436 C174 404 112 340 112 244 V122 Z"
-        fill="#10B981" fillOpacity=".12" stroke="url(#sl-g)" strokeWidth="22" strokeLinejoin="round" />
-      <path d="M256 70 V436 C174 404 112 340 112 244 V122 Z" fill="#10B981" fillOpacity=".45" />
+        fill="#62937B" fillOpacity=".12" stroke="url(#sl-g)" strokeWidth="22" strokeLinejoin="round" />
+      <path d="M256 70 V436 C174 404 112 340 112 244 V122 Z" fill="#62937B" fillOpacity=".45" />
       <circle className="splash-eye" cx="256" cy="248" r="44" fill="#06B6D4" />
       <circle cx="256" cy="248" r="18" fill="#050506" />
     </svg>

@@ -18,7 +18,7 @@ function drawLine(ctx, line, W, H, editing) {
   const nx = -ly / len, ny = lx / len, mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
   const sign = line.invert ? -1 : 1;
   ctx.font = "600 12px 'JetBrains Mono', monospace";
-  [["IN", "#10B981", sign], ["OUT", "#EF4444", -sign]].forEach(([t, c, s]) => {
+  [["IN", "#62937B", sign], ["OUT", "#EF4444", -sign]].forEach(([t, c, s]) => {
     const px = mx + nx * 26 * s, py = my + ny * 26 * s;
     ctx.fillStyle = "rgba(5,5,6,0.85)";
     ctx.fillRect(px - 20, py - 10, 40, 20);

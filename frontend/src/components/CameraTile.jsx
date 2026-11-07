@@ -79,7 +79,7 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
       </div>
       <LiveFeed stream={stream} camera={camera} onCameraChange={onCameraChange} compact={compact && !expanded} maxH={expanded || !compact ? "64vh" : undefined} />
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-white/5 px-3 py-2">
-        <Stat testid={`camera-in-${camera.id}`} label="Ingressi" value={stream.result.counts.in} color="#10B981" />
+        <Stat testid={`camera-in-${camera.id}`} label="Ingressi" value={stream.result.counts.in} color="#62937B" />
         <Stat testid={`camera-out-${camera.id}`} label="Uscite" value={stream.result.counts.out} color="#EF4444" />
         <Stat testid={`camera-present-${camera.id}`} label="In scena" value={stream.result.tracks.filter((t) => !t.fixed).length} color="#06B6D4" />
         <Stat testid={`camera-zones-${camera.id}`} label="Zone" value={`${stream.result.zones_active.length}/${camera.zones.filter((z) => z.enabled).length}`} color="#F472B6" />

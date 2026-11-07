@@ -35,7 +35,7 @@ export default function Analytics() {
         ))}
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[["Totale eventi", data?.totals.total, "rgb(var(--g100))"], ["Entrate", data?.totals.in, "#10B981"], ["Uscite", data?.totals.out, "#EF4444"], ["Allarmi", data?.totals.alerts, "#F59E0B"]].map(([l, v, c]) => (
+        {[["Totale eventi", data?.totals.total, "rgb(var(--g100))"], ["Entrate", data?.totals.in, "#62937B"], ["Uscite", data?.totals.out, "#EF4444"], ["Allarmi", data?.totals.alerts, "#F59E0B"]].map(([l, v, c]) => (
           <div key={l} className="panel p-4" data-testid={`stats-total-${l.toLowerCase().replace(/ /g, "-")}`}>
             <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-gray-500">{l}</div>
             <div className="mt-1 font-mono text-3xl tabular-nums" style={{ color: c }}>{v ?? 0}</div>
@@ -47,7 +47,7 @@ export default function Analytics() {
           <ResponsiveContainer width="100%" height={280}>
             <AreaChart data={hourly}>
               <defs>
-                {[["in", "#10B981"], ["out", "#EF4444"], ["tr", "#06B6D4"]].map(([k, c]) => (
+                {[["in", "#62937B"], ["out", "#EF4444"], ["tr", "#06B6D4"]].map(([k, c]) => (
                   <linearGradient key={k} id={`g-${k}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={c} stopOpacity={0.35} /><stop offset="100%" stopColor={c} stopOpacity={0} /></linearGradient>
                 ))}
               </defs>
@@ -55,7 +55,7 @@ export default function Analytics() {
               <XAxis dataKey="label" {...axis} minTickGap={24} />
               <YAxis {...axis} allowDecimals={false} width={30} />
               <Tooltip {...tip} />
-              <Area type="monotone" dataKey="in" name="Entrate" stroke="#10B981" fill="url(#g-in)" strokeWidth={2} />
+              <Area type="monotone" dataKey="in" name="Entrate" stroke="#62937B" fill="url(#g-in)" strokeWidth={2} />
               <Area type="monotone" dataKey="out" name="Uscite" stroke="#EF4444" fill="url(#g-out)" strokeWidth={2} />
               <Area type="monotone" dataKey="transiti" name="Transiti" stroke="#06B6D4" fill="url(#g-tr)" strokeWidth={2} />
               <Area type="monotone" dataKey="zone" name="Zone" stroke="#F472B6" fill="none" strokeWidth={2} strokeDasharray="4 3" />
@@ -79,7 +79,7 @@ export default function Analytics() {
               <XAxis type="number" {...axis} allowDecimals={false} />
               <YAxis type="category" dataKey="name" {...axis} width={90} />
               <Tooltip {...tip} cursor={{ fill: "rgba(128,128,128,0.08)" }} />
-              <Bar dataKey="value" name="Eventi" fill="#10B981" radius={[0, 3, 3, 0]} barSize={14} />
+              <Bar dataKey="value" name="Eventi" fill="#62937B" radius={[0, 3, 3, 0]} barSize={14} />
             </BarChart>
           </ResponsiveContainer>
         </Card>
