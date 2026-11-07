@@ -11,7 +11,7 @@ export default function VersionLine() {
     return () => { alive = false; };
   }, []);
   return (
-    <p data-testid="app-version" className="flex items-center justify-center gap-2 font-mono text-[11px] uppercase tracking-wider text-gray-500">
+    <p data-testid="app-version" className="flex items-center justify-center gap-2 font-mono text-[11px] uppercase tracking-wider text-gray-400">
       <Info className="h-3.5 w-3.5" /> SentinelAI {v ? `versione ${v}` : "…"}
     </p>
   );
