@@ -153,10 +153,22 @@ def save_training_frames(camera_name: str, clip_id: str, wall_utc: datetime, tz_
         day.mkdir(parents=True, exist_ok=True)
         stem = f"{local.strftime('%H%M%S')}_{clip_id[:6]}"
         for n, (_, jpeg, tracks) in enumerate(frames):
-            (day / f"{stem}_{n:02d}.jpg").write_bytes(jpeg)
-            (day / f"{stem}_{n:02d}.json").write_text(json.dumps(
-                [{k: t.get(k) for k in ("label", "class_id", "conf", "box", "fixed")}
-                 for t in tracks], ensure_ascii=False))
+            # prima il .json, poi il .jpg scritto su .tmp e rinominato: a disco pieno non restano immagini troncate
+            # né immagini senza riquadri (agente di prova 111)
+            meta = json.dumps([{k: t.get(k) for k in ("label", "class_id", "conf", "box", "fixed")} for t in tracks],
+                              ensure_ascii=False)
+            jpg, js, tmp = day / f"{stem}_{n:02d}.jpg", day / f"{stem}_{n:02d}.json", day / f"{stem}_{n:02d}.jpg.tmp"
+            try:
+                js.write_text(meta)
+                tmp.write_bytes(jpeg)
+                os.replace(tmp, jpg)
+            except OSError:
+                for f in (tmp, js):
+                    try:
+                        f.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                raise
         return None
     except OSError as exc:
         return f"Fotogrammi puliti non salvati ({exc})."
@@ -269,6 +281,7 @@ class ClipRecorder:
 
     def finish(self):
         rec, self.active = self.active, None
+        self.clean.clear()      # i fotogrammi puliti di questa clip non tornano nella successiva (agente 111)
         if rec:
             t = asyncio.create_task(self.finalize(rec))
             self.tasks.add(t)
