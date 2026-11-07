@@ -1,6 +1,6 @@
 /* Service worker di SentinelAI: rende l'app installabile e la apre anche se il server riparte.
    Le chiamate /api (video, eventi, clip) passano SEMPRE dalla rete: niente dati vecchi in cache. */
-const CACHE = "sentinelai-v1";
+const CACHE = "sentinelai-v2";
 const SHELL = ["/", "/manifest.json", "/icon-192.png", "/icon-512.png", "/favicon.svg"];
 
 self.addEventListener("install", (e) => {
@@ -19,8 +19,7 @@ self.addEventListener("fetch", (e) => {
   if (e.request.mode === "navigate") {
     // Pagina: prima la rete (versione aggiornata), se il server non risponde la copia salvata.
     e.respondWith(fetch(e.request).then((r) => {
-      const copy = r.clone();
-      caches.open(CACHE).then((c) => c.put("/", copy));
+      if (r.ok) { const copy = r.clone(); caches.open(CACHE).then((c) => c.put("/", copy)); }   // mai salvare una pagina di errore
       return r;
     }).catch(() => caches.match("/")));
     return;

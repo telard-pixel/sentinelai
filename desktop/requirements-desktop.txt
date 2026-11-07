@@ -1,5 +1,6 @@
 # Versione Windows: niente PyTorch/Ultralytics (YOLO11s gira in ONNX con OpenCV), niente MongoDB (SQLite), ffmpeg incluso (imageio-ffmpeg) per le clip H.264: il codificatore di Windows non c'è dappertutto (manca su Windows Server).
-fastapi==0.115.6
+fastapi==0.129.2
+starlette==0.52.1
 uvicorn[standard]==0.34.0
 pydantic==2.10.4
 python-dotenv==1.0.1

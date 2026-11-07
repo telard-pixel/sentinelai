@@ -24,6 +24,20 @@ PrivateTmp=true
 ReadWritePaths=/var/lib/SentinelAI /mnt
 # niente sudo, niente dispositivi
 PrivateDevices=true
+# 1.0.9 (revisione di configurazione): difese in più che non toccano rete, telecamere e /var/lib/SentinelAI
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+# AF_NETLINK serve a "ip -4 addr" (nomi ammessi)
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

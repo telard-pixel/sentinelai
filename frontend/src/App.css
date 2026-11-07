@@ -71,3 +71,7 @@
 
 /* Schede in alto (06/11/2026): la scheda attiva è una "pastiglia" verde. */
 .nav-tab-on { background: rgb(var(--em400) / 0.09); box-shadow: inset 0 0 0 1px rgb(var(--em400) / 0.22); }
+
+/* 1.0.9 (agente di prova): nel tema chiaro il verde salvia del passaggio del mouse era troppo scuro per il testo
+   scuro dei tasti (contrasto 3,6): qui un salvia più chiaro (contrasto ~7). */
+:root:not(.dark) .hover\:bg-emerald-400:hover { background-color: rgb(125 172 146); }

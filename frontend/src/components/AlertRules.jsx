@@ -82,7 +82,7 @@ export default function AlertRules({ settings, onSave }) {
           <Switch data-testid="desktop-notify-toggle" className="ml-auto" checked={draft.desktop_notifications} onCheckedChange={(v) => setDraft({ ...draft, desktop_notifications: v })} /></label>
         <div className="flex items-center gap-2 text-xs text-gray-400">
           Permesso: <span data-testid="notify-permission-status" className="font-mono text-gray-200">{!secure ? "non disponibile su http" : perm === "granted" ? "concesso" : perm === "denied" ? "negato" : perm === "unsupported" ? "non supportato" : "da richiedere"}</span>
-          {perm !== "granted" && secure && <Button data-testid="notify-permission-button" size="sm" variant="outline" className="ml-auto h-7 border-white/10 bg-transparent text-xs" onClick={async () => setPerm(await askNotifyPermission())}>Abilita</Button>}
+          {perm !== "granted" && perm !== "unsupported" && secure && <Button data-testid="notify-permission-button" size="sm" variant="outline" className="ml-auto h-7 border-white/10 bg-transparent text-xs" onClick={async () => setPerm(await askNotifyPermission())}>Abilita</Button>}
         </div>
       </div>
       {!secure && (

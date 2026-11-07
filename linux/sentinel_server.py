@@ -97,8 +97,15 @@ def main():
     os.environ["SENTINEL_LOG"] = str(data / "sentinelai.log")
     # 1.0.9: su Linux tutto andava solo nel journal e Impostazioni -> "Copia registro" diceva "non disponibile".
     # Ora ogni riga va sia nel journal (come prima) sia nel file del registro, che ruota a 5 MB come su Windows.
-    rlog = d.RotatingLog(data / "sentinelai.log")
-    sys.stdout, sys.stderr = Tee(sys.stdout, rlog), Tee(sys.stderr, rlog)
+    # make_app usa d.LOG per SENTINEL_LOG: deve essere lo stesso file del Tee anche se --dati non si chiama SentinelAI
+    d.LOG = data / "sentinelai.log"
+    try:
+        rlog = d.RotatingLog(d.LOG)
+    except OSError as exc:   # agente di prova 1.0.9: file non scrivibile = il servizio non partiva più
+        rlog = None
+        print(f"registro su file non disponibile ({exc}): resta solo il journal", file=sys.stderr, flush=True)
+    if rlog is not None:
+        sys.stdout, sys.stderr = Tee(sys.stdout, rlog), Tee(sys.stderr, rlog)
 
     rete = password_ok(data)
     host = "0.0.0.0" if rete else "127.0.0.1"
@@ -109,7 +116,7 @@ def main():
     import logging
     for lg in [logging.getLogger()] + [logging.getLogger(n) for n in list(logging.root.manager.loggerDict)]:
         for h in getattr(lg, "handlers", []):
-            if isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in (sys.stdout.a, sys.stderr.a):
+            if isinstance(sys.stderr, Tee) and isinstance(h, logging.StreamHandler) and getattr(h, "stream", None) in (sys.stdout.a, sys.stderr.a):
                 h.setStream(sys.stderr)
     d.log(f"avvio SentinelAI {d.VERSION} su {host}:{a.porta}, dati in {data}, nomi ammessi: {', '.join(lan_ipv4())}")
     import uvicorn

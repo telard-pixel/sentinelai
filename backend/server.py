@@ -410,7 +410,7 @@ async def event_snapshot(event_id: str):
     doc = await db.snapshots.find_one({"event_id": event_id}, {"_id": 0, "data": 1})
     if not doc:
         raise HTTPException(404, "Screenshot non trovato")
-    return Response(bytes(doc["data"]), media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"})
+    return Response(bytes(doc["data"]), media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
 
 
 @api.delete("/events")
@@ -513,7 +513,7 @@ async def clip_video(clip_id: str, request: Request, download: bool = False):
             raise HTTPException(404, "Il file del video non c'è più (cartella spostata, scollegata o file cancellato)")
     else:
         data = bytes(doc["data"])
-    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, max-age=86400"}
+    headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, no-store"}
     if download:
         stamp = datetime.fromisoformat(doc["timestamp"]).strftime("%Y%m%d_%H%M%S")
         headers["Content-Disposition"] = f'attachment; filename="clip_{stamp}.mp4"'
