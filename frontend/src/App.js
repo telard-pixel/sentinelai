@@ -6,7 +6,7 @@ import { Protected, SignInPage, SignUpPage } from "@/components/auth/AuthPages";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
-import { http } from "@/lib/api";
+import { http, errorText } from "@/lib/api";
 import { beep, desktopNotify } from "@/lib/alarm";
 import AppHeader from "@/components/AppHeader";
 import MonitorView from "@/components/MonitorView";
@@ -56,7 +56,7 @@ function Dashboard() {
       qc.invalidateQueries({ queryKey: ["cameras"] });
       toast.success("Impostazioni salvate");
     },
-    onError: (e) => toast.error("Salvataggio non riuscito", { description: e.response?.data?.detail?.[0]?.msg || e.message }),
+    onError: (e) => toast.error("Salvataggio non riuscito", { description: errorText(e) }),
   });
 
   return (

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Square, Columns2, Columns3, RectangleHorizontal } from "lucide-react";
 import { toast } from "sonner";
-import { http } from "@/lib/api";
+import { http, errorText } from "@/lib/api";
 import CameraTile from "@/components/CameraTile";
 import CameraDialog from "@/components/CameraDialog";
 import CounterGrid from "@/components/CounterGrid";
@@ -36,7 +36,7 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
     return next;
   }), []);
 
-  const onErr = (e) => toast.error("Salvataggio non riuscito", { description: e.response?.data?.detail?.[0]?.msg || e.message });
+  const onErr = (e) => toast.error("Salvataggio non riuscito", { description: errorText(e) });
   const update = useMutation({
     mutationFn: (c) => http.put(`/cameras/${c.id}`, toBody(c)).then((r) => r.data),
     onSuccess: (c) => qc.setQueryData(["cameras"], (list = []) => list.map((x) => (x.id === c.id ? c : x))),

@@ -33,3 +33,11 @@ http.interceptors.request.use(async (cfg) => {
   if (t) cfg.headers.Authorization = `Bearer ${t}`;
   return cfg;
 });
+
+/** Testo leggibile di un errore del server: "detail" può essere una stringa (HTTPException) o la lista di Pydantic. */
+export const errorText = (e) => {
+  const d = e?.response?.data?.detail;
+  if (typeof d === "string" && d) return d;
+  if (Array.isArray(d) && d[0]?.msg) return String(d[0].msg).replace(/^Value error, /, "");
+  return e?.message || "Errore sconosciuto";
+};
