@@ -75,6 +75,12 @@ class Detector:
             net = cv2.dnn.readNetFromONNX(str(ONNX_PATH))
             net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
             net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+            # 07/11/2026: misurato sul CT 111 (i5-7600T): 4 thread 0,87 s di CPU per analisi, 2 thread 0,67 (-23%),
+            # 350 ms invece di 270: basta per seguire chi passa. Più thread = più tempo perso a coordinarli.
+            try:
+                cv2.setNumThreads(max(1, int(os.environ.get("SENTINEL_AI_THREADS", "2"))))
+            except ValueError:
+                cv2.setNumThreads(2)
             self.model, self.kind = net, "onnx"
             global IMG_H
             try:

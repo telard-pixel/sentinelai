@@ -3,6 +3,7 @@ import { ClipboardCopy, ScrollText } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { http } from "@/lib/api";
+import { copyText } from "@/lib/utils";
 
 // 05/11/2026: il registro del programma, da copiare e incollare a chi deve aiutare (password e token oscurati).
 export default function LogSection() {
@@ -15,7 +16,7 @@ export default function LogSection() {
   const copy = async () => {
     try {
       const t = text || (await load());
-      await navigator.clipboard.writeText(t);
+      await copyText(t);
       toast.success("Registro copiato", { description: "Incollalo nella chat con Ctrl+V" });
     } catch (e) {
       toast.error("Copia non riuscita", { description: e.message });

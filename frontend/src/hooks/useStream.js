@@ -121,6 +121,7 @@ export function useStream(onEvents) {
       const v = videoRef.current;
       try {
         if (source === "webcam") {
+          if (!navigator.mediaDevices?.getUserMedia) throw new Error("La webcam del browser funziona solo su https o sul PC stesso (localhost)");
           const media = await navigator.mediaDevices.getUserMedia({
             video: deviceId ? { deviceId: { exact: deviceId } } : { width: 1280, height: 720 },
           });

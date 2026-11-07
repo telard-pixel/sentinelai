@@ -3,6 +3,7 @@ import { Spline, ArrowLeftRight, RotateCcw, Eye, EyeOff, Loader2, AlertTriangle,
 import OverlayCanvas from "@/components/OverlayCanvas";
 import HeatmapCanvas, { useHeatmap } from "@/components/HeatmapCanvas";
 import ZoneDialog from "@/components/ZoneDialog";
+import { newId } from "@/lib/utils";
 
 function HudButton({ testid, active, onClick, icon: Icon, children, compact, tone = "amber" }) {
   const on = tone === "red" ? "border-red-500/60 bg-red-500/15 text-red-300" : "border-amber-500/60 bg-amber-500/15 text-amber-300";
@@ -56,7 +57,7 @@ export default function LiveFeed({ stream, camera, onCameraChange, compact, maxH
 
   const finishZone = () => {
     if (zoneDraft.length < 3) return;
-    setPendingZone({ id: crypto.randomUUID(), name: `Zona ${camera.zones.length + 1}`, points: zoneDraft, enabled: true, categories: [], alert_on_enter: true, dwell_seconds: 0, color: "#F472B6" });
+    setPendingZone({ id: newId(), name: `Zona ${camera.zones.length + 1}`, points: zoneDraft, enabled: true, categories: [], alert_on_enter: true, dwell_seconds: 0, color: "#F472B6" });
     setMode(null);
     setZoneDraft([]);
   };

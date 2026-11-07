@@ -9,6 +9,7 @@ import TimeSelect from "@/components/TimeSelect";
 import TelegramPanel from "@/components/TelegramPanel";
 import { askNotifyPermission, beep, desktopNotify } from "@/lib/alarm";
 import { toast } from "sonner";
+import { newId } from "@/lib/utils";
 
 function RuleRow({ rule, i, onChange, onDelete }) {
   const set = (patch) => onChange({ ...rule, ...patch });
@@ -85,7 +86,7 @@ export default function AlertRules({ settings, onSave }) {
       {rules.map((r, i) => (
         <RuleRow key={r.id} rule={r} i={i} onChange={(nr) => setRules(rules.map((x, j) => (j === i ? nr : x)))} onDelete={() => setRules(rules.filter((_, j) => j !== i))} />
       ))}
-      <button data-testid="alert-rule-add-button" onClick={() => setRules([...rules, { id: crypto.randomUUID(), name: "Nuova regola", enabled: true, categories: ["persona"], direction: "any", start: "00:00", end: "23:59" }])}
+      <button data-testid="alert-rule-add-button" onClick={() => setRules([...rules, { id: newId(), name: "Nuova regola", enabled: true, categories: ["persona"], direction: "any", start: "00:00", end: "23:59" }])}
         className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-white/15 py-4 font-mono text-xs uppercase tracking-wider text-gray-400 transition-colors hover:border-emerald-500/50 hover:text-emerald-400">
         <Plus className="h-4 w-4" /> Aggiungi regola
       </button>
