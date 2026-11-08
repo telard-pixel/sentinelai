@@ -167,7 +167,7 @@ def scheda_principale(nomi):
     vere = [n for n in nomi if not any(x in n.lower() for x in finte)]
     def peso(n):
         n = n.lower()
-        if any(x in n for x in ("nvidia", "geforce", "quadro", "rtx", "radeon rx", "radeon pro", "intel(r) arc", "arc(tm) a")):
+        if any(x in n for x in ("nvidia", "geforce", "quadro", "rtx", "radeon rx", "radeon pro", "radeon (tm) pro", "intel(r) arc", "arc(tm) a")):
             return 0
         if "radeon" in n or "amd" in n:
             return 1          # "AMD Radeon(TM) Graphics" = integrata dei Ryzen
@@ -193,13 +193,16 @@ def _sessione_directml():
     for opts in ({"performance_preference": "high_performance", "device_filter": "gpu"}, {"device_id": 0}):
         try:
             sess = ort.InferenceSession(str(ONNX_PATH), so, providers=[("DmlExecutionProvider", opts)])
-            break
         except Exception as exc:  # noqa: BLE001
-            errore = exc
+            errore, sess = exc, None
+            continue
+        # onnxruntime non dà errore se DirectML non parte: ripiega da solo sul processore. Allora si prova il
+        # tentativo dopo (agente 112).
+        if sess.get_providers()[0] == "DmlExecutionProvider":
+            break
+        errore, sess = RuntimeError(f"motore {sess.get_providers()}"), None
     if sess is None:
         raise errore
-    if sess.get_providers()[0] != "DmlExecutionProvider":
-        raise RuntimeError(f"motore {sess.get_providers()}")
     inp = sess.get_inputs()[0]
     h = inp.shape[2] if isinstance(inp.shape[2], int) else IMG_H
     if isinstance(inp.shape[3], int) and inp.shape[3] != IMGSZ:
