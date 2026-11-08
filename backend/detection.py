@@ -1,3 +1,4 @@
+import logging
 import math
 import os
 import threading
@@ -61,6 +62,62 @@ IMGSZ = 640                # larghezza d'ingresso del modello
 IMG_H = 448
 
 
+logger = logging.getLogger("detection")
+
+# 08/11/2026 (1.0.14): OpenVINO, il motore di Intel, al posto di OpenCV DNN dove c'è. Misurato sul CT 111
+# (i5-7600T + Intel HD 630), YOLO11s 640x448, una analisi:
+#   OpenCV DNN (prima)          234 ms, 0,44 s di CPU
+#   OpenVINO processore         123 ms, 0,22 s di CPU
+#   OpenVINO scheda video f32    68 ms, 0,07 s di CPU   (punteggi identici a OpenCV)
+# Sulla scheda video si resta in f32: in f16 sarebbe 38 ms ma i punteggi cambiano fino a 0,04, e cambierebbe
+# cosa supera le soglie. SENTINEL_AI_MOTORE: auto (scheda video, poi processore, poi OpenCV) | cpu | opencv.
+AI_MOTORE = os.environ.get("SENTINEL_AI_MOTORE", "auto").strip().lower()
+
+
+def _ai_threads() -> int:
+    try:
+        return max(1, int(os.environ.get("SENTINEL_AI_THREADS", "2")))
+    except ValueError:
+        return 2
+
+
+def _opencv_net():
+    net = cv2.dnn.readNetFromONNX(str(ONNX_PATH))
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+    # 07/11/2026: misurato sul CT 111 (i5-7600T): 4 thread 0,87 s di CPU per analisi, 2 thread 0,67 (-23%),
+    # 350 ms invece di 270: basta per seguire chi passa. Più thread = più tempo perso a coordinarli.
+    cv2.setNumThreads(_ai_threads())
+    return net
+
+
+def _uscite_attese(h: int, w: int) -> int:
+    """Quante caselle dà YOLO11 per un ingresso h x w (passi 8, 16, 32)."""
+    return sum((h // s) * (w // s) for s in (8, 16, 32))
+
+
+class _OpenVinoNet:
+    """Stessa interfaccia di cv2.dnn (setInput/forward). Se la scheda video si guasta mentre gira si passa a
+    OpenCV per sempre (fino al riavvio): meglio lenti che ciechi."""
+
+    def __init__(self, request, device):
+        self.request, self.device, self.blob, self.riserva = request, device, None, None
+
+    def setInput(self, blob):
+        self.blob = blob
+
+    def forward(self):
+        if self.riserva is None:
+            try:
+                self.request.infer({0: self.blob})
+                return self.request.get_output_tensor(0).data.copy()
+            except Exception as exc:  # noqa: BLE001 - qualsiasi errore del motore: si ripiega
+                logger.error("IA: OpenVINO %s non risponde (%s): passo a OpenCV", self.device, exc)
+                self.riserva = _opencv_net()
+        self.riserva.setInput(self.blob)
+        return self.riserva.forward()
+
+
 class Detector:
     """YOLO11s. Con models/yolo11s.onnx gira con OpenCV DNN (versione Windows: niente PyTorch);
     altrimenti con Ultralytics come nel progetto originale (versione Docker)."""
@@ -69,19 +126,68 @@ class Detector:
         self.model = None
         self.kind = None
         self.lock = threading.Lock()
+        self.engine = ""
+
+    def _load_openvino(self) -> bool:
+        """Prova OpenVINO: scheda video (GPU), poi processore. False = resta OpenCV DNN."""
+        global IMG_H
+        if AI_MOTORE == "opencv":
+            return False
+        try:
+            import openvino as ov
+        except Exception:  # noqa: BLE001 - non installato (Windows) o libreria rotta
+            return False
+        try:
+            core = ov.Core()
+            cache = os.environ.get("SENTINEL_DATI")
+            if cache:   # il modello compilato per la scheda video si tiene: riavvio in 1-2 s invece di 8
+                try:
+                    core.set_property({"CACHE_DIR": str(Path(cache) / "cache-openvino")})
+                except Exception:  # noqa: BLE001
+                    pass
+            devices = core.available_devices
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("IA: OpenVINO non parte (%s): uso OpenCV", exc)
+            return False
+        order = ["CPU"] if AI_MOTORE == "cpu" else ["GPU", "CPU"]
+        for dev in order:
+            if dev not in devices:
+                continue
+            for h in dict.fromkeys((IMG_H, IMGSZ)):     # 640x448, poi modello quadrato (vecchia cache)
+                try:
+                    model = core.read_model(str(ONNX_PATH))
+                    model.reshape([1, 3, h, IMGSZ])
+                    cfg = {"PERFORMANCE_HINT": "LATENCY"}
+                    if dev == "GPU":
+                        cfg["INFERENCE_PRECISION_HINT"] = "f32"
+                    else:
+                        cfg["INFERENCE_NUM_THREADS"] = _ai_threads()
+                    request = core.compile_model(model, dev, cfg).create_infer_request()
+                    request.infer({0: np.zeros((1, 3, h, IMGSZ), dtype=np.float32)})
+                    shape = tuple(request.get_output_tensor(0).data.shape)
+                    if shape != (1, 84, _uscite_attese(h, IMGSZ)):
+                        raise ValueError(f"uscita {shape}")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("IA: OpenVINO %s %dx%d non va (%s)", dev, IMGSZ, h, exc)
+                    continue
+                IMG_H = h
+                self.model, self.kind = _OpenVinoNet(request, dev), "onnx"
+                name = dev
+                if dev == "GPU":
+                    try:
+                        name = f"GPU ({core.get_property('GPU', 'FULL_DEVICE_NAME')})"
+                    except Exception:  # noqa: BLE001
+                        pass
+                self.engine = f"OpenVINO {name}"
+                return True
+        return False
 
     def load(self):
         if ONNX_PATH.exists():
-            net = cv2.dnn.readNetFromONNX(str(ONNX_PATH))
-            net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-            net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-            # 07/11/2026: misurato sul CT 111 (i5-7600T): 4 thread 0,87 s di CPU per analisi, 2 thread 0,67 (-23%),
-            # 350 ms invece di 270: basta per seguire chi passa. Più thread = più tempo perso a coordinarli.
-            try:
-                cv2.setNumThreads(max(1, int(os.environ.get("SENTINEL_AI_THREADS", "2"))))
-            except ValueError:
-                cv2.setNumThreads(2)
-            self.model, self.kind = net, "onnx"
+            if self._load_openvino():
+                return
+            net = _opencv_net()
+            self.model, self.kind, self.engine = net, "onnx", "OpenCV DNN"
             global IMG_H
             try:
                 self._detect_onnx(np.zeros((360, 640, 3), dtype=np.uint8), 0.5, 0.5, None)
@@ -92,7 +198,7 @@ class Detector:
         from ultralytics import YOLO
         MODEL_PATH.parent.mkdir(exist_ok=True)
         self.model = YOLO(str(MODEL_PATH) if MODEL_PATH.exists() else f"{MODEL_NAME}.pt")
-        self.kind = "ultralytics"
+        self.kind = self.engine = "ultralytics"
         if not MODEL_PATH.exists() and Path(f"{MODEL_NAME}.pt").exists():
             Path(f"{MODEL_NAME}.pt").rename(MODEL_PATH)
         self.model.predict(np.zeros((320, 320, 3), dtype=np.uint8), verbose=False)

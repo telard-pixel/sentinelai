@@ -138,3 +138,19 @@ Stesso motore della versione Windows (YOLO11s ONNX + OpenCV + SQLite), senza fin
 - Senza password resta su 127.0.0.1. Password: dall'app, oppure
   `runuser -u sentinelai -- /opt/sentinelai/venv/bin/python /opt/sentinelai/linux/imposta-password.py` e `systemctl restart sentinelai`.
 - Nomi ammessi nell'indirizzo: gli IP del CT e il suo nome; altri con `Environment=SENTINEL_NOMI=...` nel servizio.
+
+### IA sulla scheda video (1.0.14)
+
+Su Linux l'IA gira con **OpenVINO** (il motore di Intel) invece di OpenCV DNN. Misurato sul CT 111 (i5-7600T),
+una analisi di YOLO11s 640x448: OpenCV 234 ms e 0,44 s di CPU; OpenVINO sul processore 123 ms e 0,22 s;
+OpenVINO sulla **scheda video Intel HD 630** 68 ms e 0,07 s, con punteggi identici (si resta in f32).
+
+- Il motore usato si vede in fondo alle Impostazioni ("IA OpenVINO GPU ...") e nel registro all'avvio.
+- Ordine: scheda video → processore → OpenCV. Se la scheda si guasta mentre gira, si passa a OpenCV fino al
+  riavvio. `Environment=SENTINEL_AI_MOTORE=cpu` (solo processore) o `opencv` (come prima) nel servizio.
+- Per la scheda video servono: il dispositivo nel CT (sul Proxmox, in `/etc/pve/lxc/111.conf`:
+  `dev0: /dev/dri/renderD128,gid=104,mode=0660`, 104 = gruppo render del CT) e nel CT `apt install intel-opencl-icd`.
+  Il servizio può aprire solo `/dev/dri/renderD128` (DevicePolicy=closed).
+- Il modello compilato per la scheda va in `/var/lib/SentinelAI/cache-openvino` (avvio in 1 s invece di 8).
+- Decodificare i video con la scheda NON conviene: provato l'8/11, la Sala 1080p costa ~16% di un core col
+  processore e ~20% con la scheda (riportare le immagini indietro costa quanto decodificarle).

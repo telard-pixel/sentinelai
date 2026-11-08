@@ -24,8 +24,13 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/SentinelAI /mnt
-# niente sudo, niente dispositivi
-PrivateDevices=true
+# niente sudo, niente dispositivi tranne la scheda video Intel per l'IA (1.0.14, OpenVINO): solo renderD128,
+# in lettura/scrittura; gli altri (dischi, tun, ...) restano chiusi. Il gruppo render c'è in ogni Debian.
+# Senza scheda video (o senza intel-opencl-icd) l'IA va sul processore con OpenVINO.
+PrivateDevices=false
+DevicePolicy=closed
+DeviceAllow=/dev/dri/renderD128 rw
+SupplementaryGroups=render
 # 1.0.9 (revisione di configurazione): difese in più che non toccano rete, telecamere e /var/lib/SentinelAI
 CapabilityBoundingSet=
 AmbientCapabilities=

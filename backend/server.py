@@ -233,7 +233,8 @@ async def root():
 @api.get("/version")
 async def version():
     """1.0.10: versione installata, mostrata in fondo alle Impostazioni (solo dopo il login)."""
-    return {"version": os.environ.get("SENTINEL_VERSION", "sviluppo")}
+    # 1.0.14: anche il motore dell'IA (OpenVINO scheda video / processore, OpenCV)
+    return {"version": os.environ.get("SENTINEL_VERSION", "sviluppo"), "ai": detector.engine}
 
 
 @api.get("/aggiornamento")
@@ -987,7 +988,7 @@ async def startup():
         await db.cameras.insert_one(Camera(**DEMO_CAMERA).model_dump())
     app.state.cleanup_task = asyncio.create_task(cleanup_loop())
     await asyncio.to_thread(detector.load)
-    logger.info("YOLO11s caricato (%s)", detector.kind)
+    logger.info("YOLO11s caricato (%s, motore %s)", detector.kind, detector.engine)
     # Le telecamere di rete accese restano accese anche dopo un riavvio del programma.
     settings = await load_settings()
     for d in await db.cameras.find({"monitor": True}, {"_id": 0}).to_list(200):
