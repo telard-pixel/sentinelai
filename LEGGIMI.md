@@ -84,6 +84,15 @@ Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esp
 PyInstaller e l'installer con Inno Setup, **prova l'exe e l'installer** (`SentinelAI.exe --prova`) e con un tag `vX.Y.Z`
 pubblica la Release.
 
+## Telecamera di prova (1.0.17)
+
+Interruttore "Telecamera di prova" nella finestra della telecamera (etichetta PROVA sulla scheda): l'IA analizza, conta e
+salva gli eventi, ma non scattano mai allarmi (né regole né zone), foto su Telegram o clip, e non si comprimono i
+fotogrammi per le clip. Serve per webcam pubbliche del traffico. Sul CT 111 c'è un ponte (mediamtx + yt-dlp in
+/opt/ponte-webcam, unità temporanea `ponte-webcam`, si spegne al riavvio del CT) che rende le dirette YouTube
+come `rtsp://127.0.0.1:8554/jackson` e `rtsp://127.0.0.1:8554/springboro`. Gli eventi delle telecamere di prova
+entrano nelle statistiche generali.
+
 ## Aggiornamento dall'app (1.0.12)
 
 **Impostazioni → Aggiornamenti → Aggiorna**: SentinelAI scarica la versione nuova e si riavvia da solo.
