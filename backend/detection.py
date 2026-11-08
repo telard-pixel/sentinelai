@@ -161,10 +161,19 @@ def schede_video():
 
 
 def scheda_principale(nomi):
-    """Quella che DirectML sceglie con "high_performance": la dedicata (NVIDIA/AMD) se c'è, sennò la prima vera."""
-    vere = [n for n in nomi if "microsoft" not in n.lower() and "basic" not in n.lower()]
-    dedicate = [n for n in vere if any(x in n.lower() for x in ("nvidia", "geforce", "quadro", "rtx", "radeon", "amd", "arc"))]
-    return (dedicate or vere or [""])[0]
+    """Stima (solo per la scritta) di quella che DirectML sceglie con "high_performance": la dedicata se c'è, sennò
+    la prima vera. Le virtuali (Parsec, DisplayLink, schermi indiretti) e le Radeon integrate dei Ryzen contano meno."""
+    finte = ("microsoft", "basic", "virtual", "displaylink", "parsec", "indirect", "remote")
+    vere = [n for n in nomi if not any(x in n.lower() for x in finte)]
+    def peso(n):
+        n = n.lower()
+        if any(x in n for x in ("nvidia", "geforce", "quadro", "rtx", "radeon rx", "radeon pro", "intel(r) arc", "arc(tm) a")):
+            return 0
+        if "radeon" in n or "amd" in n:
+            return 1          # "AMD Radeon(TM) Graphics" = integrata dei Ryzen
+        return 2
+    vere.sort(key=peso)       # ordinamento stabile: a parità resta l'ordine del registro
+    return (vere or [""])[0]
 
 
 def _sessione_directml():
@@ -178,10 +187,10 @@ def _sessione_directml():
     so.intra_op_num_threads = _ai_threads()
     so.log_severity_level = 3
     sess, errore = None, None
-    # con due schede (portatile: Intel + NVIDIA) si chiede la più potente; le versioni che non conoscono le
-    # opzioni le rifiutano: allora la scheda principale
-    for opts in ({"device_id": 0, "performance_preference": "high_performance", "device_filter": "gpu"},
-                 {"device_id": 0}):
+    # con due schede (portatile: Intel + NVIDIA) si chiede la più potente. SENZA device_id: con device_id
+    # onnxruntime 1.22 prende quell'adattatore e ignora le preferenze (agente 112, dml_provider_factory.cc).
+    # Ripiego device_id 0: Windows 10 vecchi senza DXCore.
+    for opts in ({"performance_preference": "high_performance", "device_filter": "gpu"}, {"device_id": 0}):
         try:
             sess = ort.InferenceSession(str(ONNX_PATH), so, providers=[("DmlExecutionProvider", opts)])
             break
