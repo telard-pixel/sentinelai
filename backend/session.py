@@ -36,6 +36,10 @@ BACKGROUND_SECONDS = 60
 # parte se c'è movimento, se sta seguendo qualcosa che non è "fermo", o comunque ogni IDLE_INTERVAL secondi
 # (chi compare senza muoversi viene trovato lo stesso). Con la scena ferma il consumo crolla.
 IDLE_INTERVAL = 3.0
+# 1.0.14 (richiesta di Roberto: CPU del CT più bassa e stabile): al massimo 4 analisi dell'IA al secondo per telecamera
+# (prima fino a 10 con movimento, es. i gatti in Sala). Il tracciamento è fatto per 2-3 analisi/s (previsione a
+# velocità costante); clip e diretta restano fluide: i fotogrammi fra un'analisi e l'altra usano le ultime tracce.
+AI_MIN_INTERVAL = 0.25
 FOLLOW_SPEED = 0.03       # inquadrature al secondo: sotto è "fermo" (lo si ricontrolla ogni IDLE_INTERVAL)
 # Soglie basse (agente di prova 105): di notte (IR, poco contrasto) e con persone piccole/lontane 18 e 0,0015
 # non scattavano e un allarme si perdeva. Con 8 e 0,0005 nessun allarme perso; rumore del sensore e orologio
@@ -114,6 +118,7 @@ class StreamSession:
         self.last_tracks: list = []
         self.last_zones: list = []
         self.last_detect = -1e9
+        self.ai_capped = False         # 1.0.14: analisi rimandata per il limite di 4/s
         self.analyses: list[float] = []     # istanti delle analisi AI (per "analisi al secondo")
         self.frame_times: list[float] = []
         self.recorder = ClipRecorder(db, camera, settings, tz_offset)
@@ -266,7 +271,13 @@ class StreamSession:
                         for t in self.tracker.tracks.values())
         # 07/11/2026: provato ogni 5 s a scena vuota (-9% di un core) ma l'agente 108 ha visto persone piccole e lente
         # di notte riconosciute fino a 14 s dopo: si resta a 3 s.
-        return moving or following or now - self.last_detect >= IDLE_INTERVAL
+        self.ai_capped = False
+        if not (moving or following or now - self.last_detect >= IDLE_INTERVAL):
+            return False
+        if now - self.last_detect < AI_MIN_INTERVAL:
+            self.ai_capped = True       # c'è movimento ma l'ultima analisi è troppo recente
+            return False
+        return True
 
     async def idle(self, frame, now):
         """Fotogramma senza AI: la clip continua a registrare (pre e post allarme), il resto resta com'è."""
@@ -281,7 +292,8 @@ class StreamSession:
             await self.flush_heat()
         return {"tracks": tracks, "events": [], "counts": self.counts, "fps": round(len(self.frame_times) / 2, 1),
                 "ai_fps": round(len([t for t in self.analyses if now - t < 4]) / 4, 1),
-                "zones_active": self.last_zones if tracks else [], "idle": True}
+                "zones_active": self.last_zones if tracks else [], "idle": True,
+                "ai_cap": getattr(self, "ai_capped", False)}
 
     async def process(self, frame):
         s = self.settings

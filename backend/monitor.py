@@ -164,7 +164,9 @@ class CameraWorker:
                         img = await asyncio.to_thread(encode_jpeg, frame, 960, 70)
                         h, w = frame.shape[:2]
                         self.broadcast({"type": "frame", "image": base64.b64encode(img).decode(), "width": w, "height": h, **result})
-                    rest = (IDLE_LOOP_SECONDS if result.get("idle") else MIN_LOOP_SECONDS) - (time.monotonic() - t0)
+                    # in attesa della prossima analisi (limite di 4/s) si resta a ritmo pieno: clip e diretta fluide
+                    slow = result.get("idle") and not result.get("ai_cap")
+                    rest = (IDLE_LOOP_SECONDS if slow else MIN_LOOP_SECONDS) - (time.monotonic() - t0)
                     if rest > 0:
                         await asyncio.sleep(rest)
             except asyncio.CancelledError:
