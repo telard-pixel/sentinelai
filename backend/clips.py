@@ -262,7 +262,8 @@ class ClipRecorder:
         return cid
 
     async def push(self, now, frame, tracks):
-        if not self.settings.clips_enabled and not self.active:
+        # 1.0.17: telecamera di prova = mai clip, quindi niente JPEG inutili (una clip già iniziata finisce)
+        if (not self.settings.clips_enabled or self.camera.prova) and not self.active:
             self.buffer.clear()
             self.clean.clear()
             return

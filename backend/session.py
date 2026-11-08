@@ -278,8 +278,7 @@ class StreamSession:
         # (agente di prova 105: "ZONA OCCUPATA" e "In scena" comparivano 1 volta su 10).
         alive = set(self.tracker.tracks)
         tracks = [t for t in (self.last_tracks or []) if t["id"] in alive]
-        if not self.camera.prova or self.recorder.active:   # 1.0.17: prova = niente clip, niente JPEG inutili (una già iniziata finisce)
-            await self.recorder.push(now, frame, tracks)
+        await self.recorder.push(now, frame, tracks)
         if now - self.last_flush >= HEAT_FLUSH_SECONDS:
             self.last_flush = now
             await self.flush_heat()
@@ -376,8 +375,7 @@ class StreamSession:
             tracks.append({"id": tr.id, "class_id": tr.cls, "label": COCO_IT[tr.cls], "category": category_of(tr.cls),
                            "conf": round(tr.conf, 3), "box": [round(v, 4) for v in tr.box], "heading": name,
                            "arrow": arrow, "angle": ang, "dx": round(hx, 4), "dy": round(hy, 4), "fixed": tr.fixed})
-        if not self.camera.prova or self.recorder.active:   # 1.0.17: prova = niente clip, niente JPEG inutili (una già iniziata finisce)
-            await self.recorder.push(now, frame, tracks)
+        await self.recorder.push(now, frame, tracks)
         if now - self.last_flush >= HEAT_FLUSH_SECONDS:
             self.last_flush = now
             await self.flush_heat()
