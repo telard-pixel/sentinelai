@@ -61,7 +61,7 @@ jobs:
           Get-Item models\yolo11s.onnx | Format-List Name, Length
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with: { name: modello-onnx, path: models/yolo11s.onnx, retention-days: 3 }
+        with: { name: modello-onnx, path: models/yolo11s.onnx, retention-days: 1 }
 
       # ---------------------------------------------------------------- exe
       - name: Costruisci SentinelAI.exe
@@ -147,7 +147,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
-        with: { name: finestra, path: finestra.png, if-no-files-found: ignore }
+        with: { name: finestra, path: finestra.png, if-no-files-found: ignore, retention-days: 1 }
 
       # ---------------------------------------------------------------- installer
       - name: Installer (Inno Setup)
@@ -205,6 +205,7 @@ jobs:
         with:
           name: SentinelAI-Setup-${{ steps.v.outputs.v }}
           path: dist/SentinelAI-Setup-*.exe
+          retention-days: 1
 
   # ---------------------------------------------------------------- pacchetto per il CT Linux (1.0.12)
   linux:
@@ -242,6 +243,7 @@ jobs:
         with:
           name: SentinelAI-linux-${{ steps.v.outputs.v }}
           path: dist/SentinelAI-linux-*.tar.gz
+          retention-days: 1
 
   release:
     needs: [exe, linux]
