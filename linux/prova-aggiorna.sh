@@ -118,4 +118,10 @@ installa_vecchia; mkdir -p "$W/vittima"; echo x > "$W/vittima/richiesta"
 rm -rf "$W/dati/aggiornamento"; ln -s "$W/vittima" "$W/dati/aggiornamento"; pubblica v1.0.11 "$W/k.pem"; esegui ok
 controlla "il collegamento non si attraversa" '[ -e $W/vittima/richiesta ]'
 
+echo "== 9. spostamento che fallisce a metà"
+mkdir -p "$W/bin"; printf '#!/bin/sh\ncase "$*" in *nuova/desktop*) exit 1 ;; esac\nexec /bin/mv "$@"\n' > "$W/bin/mv"; chmod +x "$W/bin/mv"
+installa_vecchia; pubblica v1.0.12 "$W/k.pem"; PATH="$W/bin:$PATH" esegui ok
+controlla "tutto il vecchio al suo posto" '[ "$(cat $W/opt/VERSIONE)" = 1.0.11 ] && grep -q vecchio $W/opt/backend/server.py && [ -f $W/opt/linux/sentinel_server.py ] && [ -f $W/opt/frontend/build/index.html ] && [ -d $W/opt/desktop ]'
+controlla "stato errore" 'grep -q "Installazione non riuscita" $W/run/stato.json'
+
 [ "$FALLITI" = 0 ] && echo "TUTTE LE PROVE PASSATE" || { echo "$FALLITI PROVE FALLITE"; exit 1; }

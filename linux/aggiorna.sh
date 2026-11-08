@@ -90,9 +90,9 @@ PRIMA="$DIR.prima"
 rm -rf "$PRIMA" && mkdir -p "$PRIMA/unita" || fine "Copia di riserva non creata"
 for u in $UNITA_NOSTRE; do [ -f "$UNITA/$u" ] && cp -p "$UNITA/$u" "$PRIMA/unita/"; done
 torna_indietro() {
+    # solo le parti già spostate in .prima: le altre sono ancora quelle vecchie e restano dove sono (agente 112)
     for p in $PARTI; do
-        rm -rf "$DIR/$p"
-        [ -e "$PRIMA/$p" ] && mv "$PRIMA/$p" "$DIR/$p"
+        if [ -e "$PRIMA/$p" ]; then rm -rf "$DIR/$p"; mv "$PRIMA/$p" "$DIR/$p"; fi
     done
     for u in $UNITA_NOSTRE; do
         if [ -f "$PRIMA/unita/$u" ]; then cp -p "$PRIMA/unita/$u" "$UNITA/$u"
