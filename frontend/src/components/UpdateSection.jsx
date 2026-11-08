@@ -43,7 +43,14 @@ export default function UpdateSection() {
         }
         const s = (await http.get("/aggiornamento/stato")).data;
         const srv = s.servizio;
-        const srvNow = srv && srv.tag === target && s.servizio_recente;
+        // tag vuoto = il servizio si è fermato prima di sapere la versione (es. GitHub non raggiungibile): vale lo stesso
+        const srvNow = srv && s.servizio_recente && (!srv.tag || srv.tag === target);
+        if (srvNow && srv.fase === "fatto" && srv.tag !== target) {
+          setRun(null);
+          toast.info(srv.messaggio || "Niente da installare");
+          check(true);
+          return;
+        }
         if (s.fase === "errore" || (srvNow && srv.fase === "errore")) {
           setRun(null);
           toast.error("Aggiornamento non riuscito", { description: (srvNow && srv.fase === "errore" ? srv.messaggio : s.messaggio) || "" });

@@ -24,7 +24,8 @@ PY="$DIR/venv/bin/python"
 PARTI="backend desktop frontend linux VERSIONE"
 UNITA_NOSTRE="sentinelai.service sentinelai-aggiorna.service sentinelai-aggiorna.path"
 
-rm -f "$DATI/aggiornamento/richiesta"
+# la cartella è dell'utente sentinelai: se fosse un collegamento simbolico non la si attraversa (agente 112)
+[ -L "$DATI/aggiornamento" ] || rm -f "$DATI/aggiornamento/richiesta"
 mkdir -p "$STATO_DIR" && chmod 755 "$STATO_DIR"
 exec >>"$LOG" 2>&1
 TAG=""
@@ -81,27 +82,31 @@ mkdir "$T/nuova"
 (umask 022; tar -xzf "$T/$NOME" -C "$T/nuova" --no-same-owner --no-same-permissions) || fine "Pacchetto illeggibile"
 [ "$(cat "$T/nuova/VERSIONE" 2>/dev/null)" = "${TAG#v}" ] && [ -f "$T/nuova/backend/server.py" ] \
     && [ -f "$T/nuova/linux/sentinel_server.py" ] && [ -f "$T/nuova/frontend/build/index.html" ] \
-    && [ -f "$T/nuova/backend/chiave_pubblica.pem" ] || fine "Pacchetto incompleto"
+    && [ -f "$T/nuova/backend/chiave_pubblica.pem" ] && [ -f "$T/nuova/desktop/sentinel_desktop.py" ] \
+    || fine "Pacchetto incompleto"
 "$PY" -I -m compileall -q "$T/nuova/backend" "$T/nuova/linux" "$T/nuova/desktop" >/dev/null || fine "Pacchetto con errori"
 
 PRIMA="$DIR.prima"
 rm -rf "$PRIMA" && mkdir -p "$PRIMA/unita" || fine "Copia di riserva non creata"
 for u in $UNITA_NOSTRE; do [ -f "$UNITA/$u" ] && cp -p "$UNITA/$u" "$PRIMA/unita/"; done
-for p in $PARTI; do
-    [ -e "$DIR/$p" ] && mv "$DIR/$p" "$PRIMA/$p"
-    mv "$T/nuova/$p" "$DIR/$p"
-done
-
 torna_indietro() {
     for p in $PARTI; do
         rm -rf "$DIR/$p"
         [ -e "$PRIMA/$p" ] && mv "$PRIMA/$p" "$DIR/$p"
     done
-    for u in $UNITA_NOSTRE; do [ -f "$PRIMA/unita/$u" ] && cp -p "$PRIMA/unita/$u" "$UNITA/$u"; done
+    for u in $UNITA_NOSTRE; do
+        if [ -f "$PRIMA/unita/$u" ]; then cp -p "$PRIMA/unita/$u" "$UNITA/$u"
+        else rm -f "$UNITA/$u"; fi      # unità aggiunte dalla versione nuova: via anche loro (agente 112)
+    done
     $SYSTEMCTL daemon-reload
     if [ "${DIPENDENZE:-0}" = 1 ]; then "$PY" -m pip install -q -r "$DIR/linux/requirements-linux.txt"; fi
     $SYSTEMCTL restart sentinelai
 }
+
+for p in $PARTI; do
+    if [ -e "$DIR/$p" ]; then mv "$DIR/$p" "$PRIMA/$p" || { torna_indietro; fine "Installazione non riuscita: resta la $ORA"; }; fi
+    mv "$T/nuova/$p" "$DIR/$p" || { torna_indietro; fine "Installazione non riuscita: resta la $ORA"; }
+done
 
 DIPENDENZE=0
 if ! cmp -s "$PRIMA/linux/requirements-linux.txt" "$DIR/linux/requirements-linux.txt"; then

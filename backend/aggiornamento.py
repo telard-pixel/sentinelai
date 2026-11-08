@@ -330,7 +330,7 @@ def installa_setup(setup: Path):
                 chiudi_app()
         except Exception:  # noqa: BLE001
             logger.exception("chiusura per l'aggiornamento")
-        time.sleep(15)
+        time.sleep(6)
         os._exit(0)     # se qualcosa tiene acceso il programma, lo script lo aspetterebbe 40 s: meglio uscire
     threading.Thread(target=chiudi, daemon=True, name="chiudi-per-aggiornare").start()
 

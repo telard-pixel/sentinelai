@@ -45,7 +45,8 @@ pubblica() {   # tag, chiave per firmare, [contenuto server.py], [sha256 da scri
     cp "$W/pub.pem" "$W/pk/backend/chiave_pubblica.pem"
     echo "print('nuovo')" > "$W/pk/linux/sentinel_server.py"
     echo "print('nuovo')" > "$W/pk/desktop/sentinel_desktop.py"
-    cp "$QUI/linux/requirements-linux.txt" "$QUI/linux/sentinelai.service" "$W/pk/linux/"
+    cp "$QUI/linux/requirements-linux.txt" "$QUI/linux/sentinelai.service" "$QUI/linux/sentinelai-aggiorna.path" "$W/pk/linux/"
+    [ "${SENZA_DESKTOP:-0}" = 1 ] && rm -rf "$W/pk/desktop" && mkdir "$W/pk/desktop"
     echo "<html>nuovo" > "$W/pk/frontend/build/index.html"
     nome="SentinelAI-linux-$v.tar.gz"
     tar -czf "$W/rel/$tag/$nome" -C "$W/pk" VERSIONE backend desktop frontend linux
@@ -92,6 +93,7 @@ echo "== 3. la nuova non parte"
 installa_vecchia; pubblica v1.0.12 "$W/k.pem"; esegui ko
 controlla "rimessa la vecchia" '[ "$(cat $W/opt/VERSIONE)" = 1.0.11 ] && grep -q vecchio $W/opt/backend/server.py && grep -q vecchio $W/opt/frontend/build/index.html'
 controlla "unità vecchia rimessa" 'grep -q "unita vecchia" $W/unita/sentinelai.service'
+controlla "unità aggiunta tolta" '[ ! -e $W/unita/sentinelai-aggiorna.path ]'
 controlla "stato errore con ritorno" 'grep -q "rimessa la 1.0.11" $W/run/stato.json'
 controlla "riavviata la vecchia (2 restart)" '[ "$(grep -c "restart sentinelai" $W/systemctl.log)" = 2 ]'
 
@@ -106,5 +108,14 @@ controlla "rifiutato" 'grep -q "non corrisponde al certificato" $W/run/stato.jso
 echo "== 6. codice con errori di sintassi"
 installa_vecchia; pubblica v1.0.12 "$W/k.pem" "def ("; esegui ok
 controlla "rifiutato prima di toccare" 'grep -q "Pacchetto con errori" $W/run/stato.json && grep -q vecchio $W/opt/backend/server.py'
+
+echo "== 7. pacchetto senza desktop/"
+installa_vecchia; SENZA_DESKTOP=1 pubblica v1.0.12 "$W/k.pem"; esegui ok
+controlla "rifiutato" 'grep -q "Pacchetto incompleto" $W/run/stato.json && [ "$(cat $W/opt/VERSIONE)" = 1.0.11 ]'
+
+echo "== 8. cartella della richiesta come collegamento simbolico"
+installa_vecchia; mkdir -p "$W/vittima"; echo x > "$W/vittima/richiesta"
+rm -rf "$W/dati/aggiornamento"; ln -s "$W/vittima" "$W/dati/aggiornamento"; pubblica v1.0.11 "$W/k.pem"; esegui ok
+controlla "il collegamento non si attraversa" '[ -e $W/vittima/richiesta ]'
 
 [ "$FALLITI" = 0 ] && echo "TUTTE LE PROVE PASSATE" || { echo "$FALLITI PROVE FALLITE"; exit 1; }
