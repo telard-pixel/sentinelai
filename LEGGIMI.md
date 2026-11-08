@@ -145,6 +145,8 @@ Su Linux l'IA gira con **OpenVINO** (il motore di Intel) invece di OpenCV DNN. M
 una analisi di YOLO11s 640x448: OpenCV 234 ms e 0,44 s di CPU; OpenVINO sul processore 123 ms e 0,22 s;
 OpenVINO sulla **scheda video Intel HD 630** 68 ms e 0,07 s, con punteggi identici (si resta in f32).
 
+- **Windows (1.0.15)**: stesso motore incluso nell'exe. Usa la scheda video se è Intel (anche accanto a una
+  NVIDIA), altrimenti il processore con OpenVINO (circa il doppio più veloce di OpenCV).
 - Il motore usato si vede in fondo alle Impostazioni ("IA OpenVINO GPU ...") e nel registro all'avvio.
 - Ordine: scheda video → processore → OpenCV. Se la scheda si guasta mentre gira, si passa a OpenCV fino al
   riavvio. `Environment=SENTINEL_AI_MOTORE=cpu` (solo processore) o `opencv` (come prima) nel servizio.

@@ -70,7 +70,8 @@ logger = logging.getLogger("detection")
 #   OpenVINO processore         123 ms, 0,22 s di CPU
 #   OpenVINO scheda video f32    68 ms, 0,07 s di CPU   (punteggi identici a OpenCV)
 # Sulla scheda video si resta in f32: in f16 sarebbe 38 ms ma i punteggi cambiano fino a 0,04, e cambierebbe
-# cosa supera le soglie. SENTINEL_AI_MOTORE: auto (scheda video, poi processore, poi OpenCV) | cpu | opencv.
+# cosa supera le soglie. Su Windows (1.0.15) lo stesso: scheda video Intel se c'è (le NVIDIA/AMD OpenVINO non le
+# usa), altrimenti processore. SENTINEL_AI_MOTORE: auto (scheda video, poi processore, poi OpenCV) | cpu | opencv.
 AI_MOTORE = os.environ.get("SENTINEL_AI_MOTORE", "auto").strip().lower()
 
 
@@ -144,7 +145,7 @@ class Detector:
             return False
         try:
             core = ov.Core()
-            cache = os.environ.get("SENTINEL_DATI")
+            cache = os.environ.get("SENTINEL_DATI") or os.environ.get("DATA_DIR")   # Linux / Windows
             if cache:   # il modello compilato per la scheda video si tiene: riavvio in 1-2 s invece di 8
                 try:
                     core.set_property({"CACHE_DIR": str(Path(cache) / "cache-openvino")})
@@ -156,7 +157,8 @@ class Detector:
             return False
         order = ["CPU"] if AI_MOTORE == "cpu" else ["GPU", "CPU"]
         for dev in order:
-            if dev not in devices:
+            # con più schede video OpenVINO le chiama GPU.0, GPU.1 (es. Intel + NVIDIA su Windows): "GPU" = la prima
+            if not any(d == dev or d.startswith(dev + ".") for d in devices):
                 continue
             for h in dict.fromkeys((IMG_H, IMGSZ)):     # 640x448, poi modello quadrato (vecchia cache)
                 try:

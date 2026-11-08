@@ -610,6 +610,8 @@ def prova(out_file: str) -> int:
         check(h["model_loaded"], f"modello caricato: {h}")
         import detection
         check(detection.detector.kind == "onnx", f"motore: {detection.detector.kind}")
+        # 1.0.15: IA con OpenVINO anche su Windows (sul runner di GitHub non c'è scheda Intel: processore)
+        check(detection.detector.engine.startswith("OpenVINO"), f"IA con OpenVINO: {detection.detector.engine}")
         cams = get("/api/cameras")
         check(cams and cams[0]["type"] == "demo", "telecamera demo")
         page = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10).read()

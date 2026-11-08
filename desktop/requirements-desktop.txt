@@ -10,6 +10,9 @@ openpyxl==3.1.5
 # pymongo solo per IndexModel e ASCENDING/DESCENDING usati da server.py (il database resta SQLite).
 pymongo==4.9.2
 opencv-python-headless==4.10.0.84
+# 1.0.15: IA con OpenVINO (scheda video Intel o processore), OpenCV DNN resta di riserva
+openvino==2024.6.0
+openvino-telemetry==2025.2.0
 websockets==14.1
 pystray==0.19.5
 # finestra propria: WebView2 (Edge integrato in Windows 10/11) dentro il programma
