@@ -645,19 +645,30 @@ def prova(out_file: str) -> int:
         people = sum(1 for d in dets for c, _, _ in d if c == 0)
         check(people >= 3, f"persone riconosciute nel demo: {people} in {len(dets)} fotogrammi ({ms:.0f} ms a fotogramma)")
 
-        # 1.0.16: DirectML incluso e con gli stessi risultati di OpenCV (qui sulla scheda software di Windows)
+        # 1.0.16: DirectML incluso nell'exe. Sul runner (Hyper-V) non c'è una scheda DirectX 12: onnxruntime ripiega
+        # sul processore e il programma deve scartarlo (visto sopra: motore scelto). Con una scheda vera (PC di casa)
+        # si confronta anche con OpenCV.
         import numpy as np
         try:
-            sess, hh, dms, dcpu = detection._sessione_directml()
-            ref = detection._opencv_net()
-            diff = 0.0
-            for f in frames[::30]:
-                blob = cv2.dnn.blobFromImage(cv2.resize(f, (detection.IMGSZ, hh)), 1 / 255.0, (detection.IMGSZ, hh), swapRB=True)
-                ref.setInput(blob)
-                a = ref.forward()
-                b = sess.run(None, {sess.get_inputs()[0].name: blob})[0]
-                diff = max(diff, float(np.abs(a[0, 4:] - b[0, 4:]).max()))
-            check(diff < 0.01, f"DirectML uguale a OpenCV (differenza max {diff:.4f}; {dms:.0f} ms, {dcpu:.2f} s di CPU)")
+            import onnxruntime as ort
+            dml = sorted(p.name for p in Path(ort.__file__).parent.rglob("DirectML*.dll"))
+            check("DmlExecutionProvider" in ort.get_available_providers() and dml,
+                  f"DirectML incluso: {dml}, motori {ort.get_available_providers()}")
+            try:
+                sess, hh, dms, dcpu = detection._sessione_directml()
+            except RuntimeError as exc:
+                lines.append(f"INFO DirectML non usabile qui (nessuna scheda DirectX 12): {exc}")
+            else:
+                ref = detection._opencv_net()
+                diff = 0.0
+                for f in frames[::30]:
+                    blob = cv2.dnn.blobFromImage(cv2.resize(f, (detection.IMGSZ, hh)), 1 / 255.0,
+                                                 (detection.IMGSZ, hh), swapRB=True)
+                    ref.setInput(blob)
+                    a = ref.forward()
+                    b = sess.run(None, {sess.get_inputs()[0].name: blob})[0]
+                    diff = max(diff, float(np.abs(a[0, 4:] - b[0, 4:]).max()))
+                check(diff < 0.01, f"DirectML uguale a OpenCV (differenza max {diff:.4f}; {dms:.0f} ms, {dcpu:.2f} s di CPU)")
         except Exception as exc:  # noqa: BLE001
             check(False, f"DirectML: {exc}")
 
