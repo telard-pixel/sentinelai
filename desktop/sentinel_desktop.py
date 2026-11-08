@@ -162,6 +162,8 @@ def make_app(data_dir: Path, password: str, rete: bool = False):
                       ALLOWED_HOSTS=",".join(hosts), SENTINEL_LOG=str(LOG), SENTINEL_RETE="1" if rete else "0",
                       SENTINEL_VERSION=VERSION,
                       SENTINEL_CLIPS_DIR=str(videos_folder()))
+    if FROZEN and os.name == "nt":
+        os.environ["SENTINEL_AGGIORNAMENTO"] = "windows"   # 1.0.12: pulsante "Aggiorna" (backend/aggiornamento.py)
     ff = bundled_ffmpeg()
     if ff and not os.environ.get("IMAGEIO_FFMPEG_EXE"):
         os.environ["IMAGEIO_FFMPEG_EXE"] = ff
@@ -702,6 +704,39 @@ def running_port():
         return None
 
 
+def _hook_aggiornamento(srv, win, args):
+    """1.0.12: l'aggiornamento dall'app chiude il programma così (server, icona, finestra). Con
+    --prova-aggiornamento <Setup.exe> (solo CI) reinstalla quel Setup con lo stesso percorso del pulsante."""
+    try:
+        import aggiornamento
+    except Exception:
+        log("aggiornamento dall'app non disponibile:\n" + traceback.format_exc())
+        return
+
+    def chiudi():
+        srv.should_exit = True
+        if win is not None:
+            try:
+                if win.tray is not None:
+                    win.tray.stop()
+            except Exception:
+                pass
+            win.quit()
+    aggiornamento.chiudi_app = chiudi
+    if args[:1] == ["--prova-aggiornamento"] and len(args) > 1:
+        import shutil
+
+        def prova_agg():
+            time.sleep(10)
+            d = DATA / "aggiornamento"
+            d.mkdir(exist_ok=True)
+            dest = d / Path(args[1]).name
+            shutil.copyfile(args[1], dest)
+            log(f"prova aggiornamento: reinstallo {dest.name}")
+            aggiornamento.installa_setup(dest)
+        threading.Thread(target=prova_agg, daemon=True, name="prova-aggiornamento").start()
+
+
 def main():
     args = sys.argv[1:]
     if args[:1] == ["--prova"]:
@@ -738,6 +773,7 @@ def main():
     host = "0.0.0.0" if rete else "127.0.0.1"
     log(f"avvio SentinelAI {VERSION} su {host}:{port}, dati in {DATA}")
     srv = start_server(make_app(DATA, cfg.get("password", ""), rete), host, port)
+    _hook_aggiornamento(srv, win, args)
     for _ in range(120):
         if health(port):
             break

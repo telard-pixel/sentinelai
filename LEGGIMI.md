@@ -84,6 +84,25 @@ Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esp
 PyInstaller e l'installer con Inno Setup, **prova l'exe e l'installer** (`SentinelAI.exe --prova`) e con un tag `vX.Y.Z`
 pubblica la Release.
 
+## Aggiornamento dall'app (1.0.12)
+
+**Impostazioni → Aggiornamenti → Aggiorna**: SentinelAI scarica la versione nuova e si riavvia da solo.
+
+- Le versioni si prendono dal repository **pubblico** `telard-pixel/sentinelai-rilasci`, che contiene solo gli
+  installer (il codice resta qui, privato). Ogni versione ha il certificato `rilascio.json` firmato (RSA-PSS):
+  versione, commit e impronta SHA-256 di Setup e pacchetto Linux. Si installa solo una versione più nuova, con firma
+  valida (chiave pubblica `backend/chiave_pubblica.pem`, quella della versione già installata) e impronta giusta.
+- Windows: il Setup scaricato parte in silenzio dopo la chiusura di SentinelAI (`aggiorna.cmd` nella cartella dati
+  `aggiornamento`), poi SentinelAI si riapre. Se il Setup fallisce resta la versione di prima.
+- CT Linux: il servizio (utente `sentinelai`) lascia solo la richiesta `/var/lib/SentinelAI/aggiornamento/richiesta`;
+  `sentinelai-aggiorna.path` avvia come root `linux/aggiorna.sh`, che verifica, installa (codice, librerie se cambiate,
+  unità systemd), riavvia e se SentinelAI non resta su rimette la versione di prima (`/opt/sentinelai.prima`).
+  Registro: `/var/log/sentinelai-aggiorna.log`; stato per l'app: `/run/sentinelai-aggiorna/stato.json`.
+  Installazione una tantum: copiare `linux/sentinelai-aggiorna.{path,service}` in `/etc/systemd/system`, poi
+  `systemctl daemon-reload && systemctl enable --now sentinelai-aggiorna.path`.
+- Pubblicazione, solo dopo l'ok dell'agente di prova: `bash tools/pubblica-rilascio.sh vX.Y.Z` (chiave privata in
+  `/root/code/sentinelai-chiave/firma.pem`, mai nel repository).
+
 ## Sicurezza (revisione 06/11/2026)
 
 - Il server risponde solo alla pagina dell'app: niente CORS aperto, i comandi e lo streaming che arrivano da un altro

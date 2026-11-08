@@ -1,0 +1,10 @@
+# 1.0.12: installa la versione nuova firmata (linux/aggiorna.sh). Root: deve scrivere in /opt e riavviare SentinelAI.
+[Unit]
+Description=SentinelAI: installa la versione nuova (firmata)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/sentinelai/linux/aggiorna.sh
+TimeoutStartSec=1200

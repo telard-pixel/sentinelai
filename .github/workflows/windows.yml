@@ -166,23 +166,90 @@ jobs:
           Get-Content prova2.txt
           if ($q.ExitCode -ne 0) { Write-Error "prova dopo l'installazione fallita"; exit 1 }
 
+      - name: Prova l'aggiornamento dall'app (chiude, reinstalla in silenzio, si riapre)
+        shell: pwsh
+        run: |
+          $exe = "$env:LOCALAPPDATA\Programs\SentinelAI\SentinelAI.exe"
+          $setup = (Get-ChildItem dist\SentinelAI-Setup-*.exe).FullName
+          $log = "$env:LOCALAPPDATA\SentinelAI\sentinelai.log"
+          Get-Process SentinelAI -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Process -FilePath $exe -ArgumentList '--prova-aggiornamento', "`"$setup`"", '--minimizzato'
+          Start-Sleep -Seconds 8
+          $pid1 = (Get-Process SentinelAI | Select-Object -First 1).Id
+          Write-Host "prima: processo $pid1"
+          $fail = @(); $ok = $false
+          for ($i = 0; $i -lt 90; $i++) {
+            Start-Sleep -Seconds 2
+            $p = @(Get-Process SentinelAI -ErrorAction SilentlyContinue)
+            if ($p.Count -eq 1 -and $p[0].Id -ne $pid1 -and (Select-String -Path $log -Pattern 'installazione riuscita' -Quiet)) {
+              $porta = Get-Content "$env:LOCALAPPDATA\SentinelAI\porta.txt"
+              try { $ok = (Invoke-RestMethod "http://127.0.0.1:$porta/api/health").status -eq 'ok' } catch {}
+              if ($ok) { break }
+            }
+          }
+          $n = @(Get-Process SentinelAI -ErrorAction SilentlyContinue).Count
+          Write-Host "dopo: processi $n, server $ok"
+          Get-Content "$env:LOCALAPPDATA\SentinelAI\aggiornamento\setup.log" -Tail 5 -ErrorAction SilentlyContinue
+          Get-Content $log -Tail 25
+          Get-Process SentinelAI -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $ok) { $fail += 'dopo l''aggiornamento SentinelAI non è ripartito' }
+          if ($n -ne 1) { $fail += "processi dopo l'aggiornamento: $n" }
+          if ($fail.Count) { Write-Error ($fail -join '; '); exit 1 }
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: SentinelAI-Setup-${{ steps.v.outputs.v }}
           path: dist/SentinelAI-Setup-*.exe
 
+  # ---------------------------------------------------------------- pacchetto per il CT Linux (1.0.12)
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { persist-credentials: false }
+      - name: Versione
+        id: v
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "v=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT; else echo "v=1.0.0-prova.${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT; fi
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - name: Compila l'app
+        working-directory: frontend
+        env: { CI: "false", GENERATE_SOURCEMAP: "false" }
+        run: |
+          npm ci --no-audit --no-fund --loglevel=error
+          npm run build
+      - name: Prova l'aggiornamento Linux (firma, ritorno indietro)
+        run: sh linux/prova-aggiorna.sh
+      - name: Pacchetto
+        run: |
+          V=${{ steps.v.outputs.v }}
+          echo "$V" > VERSIONE
+          mkdir -p dist
+          find backend desktop linux -name __pycache__ -prune -exec rm -rf {} +
+          tar -czf "dist/SentinelAI-linux-$V.tar.gz" --owner=0 --group=0 --sort=name \
+            --exclude=backend/_riferimento --exclude=backend/Dockerfile --exclude=backend/requirements.txt \
+            VERSIONE backend desktop/sentinel_desktop.py linux frontend/build
+          tar -tzf "dist/SentinelAI-linux-$V.tar.gz" | grep -v '^frontend/build/static/' 
+          ls -la dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: SentinelAI-linux-${{ steps.v.outputs.v }}
+          path: dist/SentinelAI-linux-*.tar.gz
+
   release:
-    needs: exe
+    needs: [exe, linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with: { pattern: SentinelAI-Setup-*, path: dist, merge-multiple: true }
+        with: { pattern: "SentinelAI-*", path: dist, merge-multiple: true }
       - name: Pubblica la release
         env: { GH_TOKEN: "${{ github.token }}" }
         shell: bash
         run: |
           ls -la dist
-          gh release create "$GITHUB_REF_NAME" dist/SentinelAI-Setup-*.exe --repo "$GITHUB_REPOSITORY" --title "SentinelAI $GITHUB_REF_NAME" --notes "Installer per Windows 10/11 (64 bit). Scarica SentinelAI-Setup e avvialo."
+          gh release create "$GITHUB_REF_NAME" dist/SentinelAI-Setup-*.exe dist/SentinelAI-linux-*.tar.gz --repo "$GITHUB_REPOSITORY" --title "SentinelAI $GITHUB_REF_NAME" --notes "Installer per Windows 10/11 (64 bit). Scarica SentinelAI-Setup e avvialo."

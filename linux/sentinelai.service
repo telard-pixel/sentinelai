@@ -12,6 +12,8 @@ Environment=SENTINEL_PORTA=8765
 Environment=TZ=Europe/Rome
 # OpenCV: un thread per core di default; lasciamo un core libero al resto del CT
 Environment=OMP_NUM_THREADS=3
+# 1.0.12: pulsante "Aggiorna": la richiesta la esegue sentinelai-aggiorna (root, linux/aggiorna.sh)
+Environment=SENTINEL_AGGIORNAMENTO=linux
 ExecStart=/opt/sentinelai/venv/bin/python /opt/sentinelai/linux/sentinel_server.py
 Restart=always
 # 1.0.9: file nuovi (database, registro, clip) leggibili solo dal servizio

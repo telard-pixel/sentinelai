@@ -20,3 +20,5 @@ pyinstaller==6.11.1
 imageio-ffmpeg==0.5.1
 # fusi orari per zoneinfo su Windows (Europe/Rome con l'ora legale giusta)
 tzdata==2024.2
+# 1.0.12: firma delle versioni nuove (aggiornamento dall'app)
+cryptography==43.0.3

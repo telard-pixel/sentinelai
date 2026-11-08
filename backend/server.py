@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
+import aggiornamento
 import clips as clips_mod
 import telegram_bot
 from auth_local import require_approved, users_router, ws_member
@@ -233,6 +234,26 @@ async def root():
 async def version():
     """1.0.10: versione installata, mostrata in fondo alle Impostazioni (solo dopo il login)."""
     return {"version": os.environ.get("SENTINEL_VERSION", "sviluppo")}
+
+
+@api.get("/aggiornamento")
+async def update_check(forza: bool = False):
+    """1.0.12: c'è una versione nuova? (repository pubblico dei rilasci, controllato al massimo ogni 10 minuti)"""
+    return {**await asyncio.to_thread(aggiornamento.controlla, forza), "stato": aggiornamento.stato()}
+
+
+@api.post("/aggiornamento/installa")
+async def update_install():
+    """1.0.12: scarica, controlla la firma e installa la versione nuova; SentinelAI si riavvia da solo."""
+    try:
+        return await asyncio.to_thread(aggiornamento.avvia)
+    except aggiornamento.ErroreAggiornamento as e:
+        raise HTTPException(409, str(e))
+
+
+@api.get("/aggiornamento/stato")
+async def update_status():
+    return aggiornamento.stato()
 
 
 @public.get("/health")
@@ -957,6 +978,10 @@ DEMO_CAMERA = {"name": "Demo strada", "type": "demo"}
 @app.on_event("startup")
 async def startup():
     load_telegram_token()
+    esito = aggiornamento.esito_ultimo_setup()
+    if esito is not None:
+        logger.warning("aggiornamento: installazione %s (codice %s), ora versione %s",
+                       "riuscita" if esito == "0" else "NON riuscita", esito, aggiornamento.versione_attuale())
     app.state.index_task = asyncio.create_task(ensure_indexes())
     if not await db.cameras.count_documents({}):
         await db.cameras.insert_one(Camera(**DEMO_CAMERA).model_dump())

@@ -9,6 +9,7 @@ import ThemeSelector from "@/components/ThemeSelector";
 import UsersSection from "@/components/UsersSection";
 import LogSection from "@/components/LogSection";
 import VersionLine from "@/components/VersionLine";
+import UpdateSection from "@/components/UpdateSection";
 import PasswordSection from "@/components/PasswordSection";
 import ClipsFolderSection from "@/components/ClipsFolderSection";
 import { Switch } from "@/components/ui/switch";
@@ -94,6 +95,7 @@ export default function SettingsSheet({ open, onOpenChange, settings, onSave }) 
             })}
           </div>
           <StorageSection days={d.retention_days ?? 30} onDays={(v) => setD({ ...d, retention_days: v })} />
+          <UpdateSection />
           <LogSection />
           <Button data-testid="settings-save-button" onClick={() => { onSave(d); onOpenChange(false); }} className="w-full bg-emerald-500 font-mono text-xs uppercase tracking-wider text-[#04130D] hover:bg-emerald-400">Salva impostazioni</Button>
           <VersionLine />
