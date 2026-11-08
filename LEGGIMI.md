@@ -150,7 +150,9 @@ OpenVINO sulla **scheda video Intel HD 630** 68 ms e 0,07 s, con punteggi identi
   riavvio. `Environment=SENTINEL_AI_MOTORE=cpu` (solo processore) o `opencv` (come prima) nel servizio.
 - Per la scheda video servono: il dispositivo nel CT (sul Proxmox, in `/etc/pve/lxc/111.conf`:
   `dev0: /dev/dri/renderD128,gid=104,mode=0660`, 104 = gruppo render del CT) e nel CT `apt install intel-opencl-icd`.
-  Il servizio può aprire solo `/dev/dri/renderD128` (DevicePolicy=closed).
+  Il servizio non ha più PrivateDevices; DevicePolicy=closed + DeviceAllow=renderD128 chiude gli altri dispositivi
+  solo su una macchina vera: dentro un CT LXC systemd non lo applica e restano i permessi dei file.
+- Se openvino o il driver andassero in crash (il servizio ripartirebbe di continuo): `SENTINEL_AI_MOTORE=opencv`.
 - Il modello compilato per la scheda va in `/var/lib/SentinelAI/cache-openvino` (avvio in 1 s invece di 8).
 - Decodificare i video con la scheda NON conviene: provato l'8/11, la Sala 1080p costa ~16% di un core col
   processore e ~20% con la scheda (riportare le immagini indietro costa quanto decodificarle).

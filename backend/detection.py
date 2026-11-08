@@ -100,8 +100,9 @@ class _OpenVinoNet:
     """Stessa interfaccia di cv2.dnn (setInput/forward). Se la scheda video si guasta mentre gira si passa a
     OpenCV per sempre (fino al riavvio): meglio lenti che ciechi."""
 
-    def __init__(self, request, device):
+    def __init__(self, request, device, detector=None):
         self.request, self.device, self.blob, self.riserva = request, device, None, None
+        self.detector, self.avvisato = detector, False
 
     def setInput(self, blob):
         self.blob = blob
@@ -112,8 +113,12 @@ class _OpenVinoNet:
                 self.request.infer({0: self.blob})
                 return self.request.get_output_tensor(0).data.copy()
             except Exception as exc:  # noqa: BLE001 - qualsiasi errore del motore: si ripiega
-                logger.error("IA: OpenVINO %s non risponde (%s): passo a OpenCV", self.device, exc)
+                if not self.avvisato:   # un errore solo nel registro, anche se il ripiego non parte
+                    logger.error("IA: OpenVINO %s non risponde (%s): passo a OpenCV", self.device, exc)
+                    self.avvisato = True
                 self.riserva = _opencv_net()
+                if self.detector is not None:     # le Impostazioni mostrano il motore vero
+                    self.detector.engine = "OpenCV DNN (ripiego)"
         self.riserva.setInput(self.blob)
         return self.riserva.forward()
 
@@ -171,7 +176,7 @@ class Detector:
                     logger.warning("IA: OpenVINO %s %dx%d non va (%s)", dev, IMGSZ, h, exc)
                     continue
                 IMG_H = h
-                self.model, self.kind = _OpenVinoNet(request, dev), "onnx"
+                self.model, self.kind = _OpenVinoNet(request, dev, self), "onnx"
                 name = dev
                 if dev == "GPU":
                     try:
