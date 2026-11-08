@@ -75,8 +75,13 @@ jobs:
         shell: pwsh
         run: |
           $p = Start-Process -FilePath dist\SentinelAI\SentinelAI.exe -ArgumentList '--prova', "$PWD\prova.txt" -Wait -PassThru
-          Get-Content prova.txt
-          if ($p.ExitCode -ne 0) { Write-Error "prova fallita (codice $($p.ExitCode))"; exit 1 }
+          if (Test-Path prova.txt) { Get-Content prova.txt } else { Write-Host "prova.txt non scritto" }
+          if ($p.ExitCode -ne 0) {
+            Write-Host "--- registro (codice $($p.ExitCode))"
+            Get-Content "$env:LOCALAPPDATA\SentinelAI\sentinelai.log" -Tail 60 -ErrorAction SilentlyContinue
+            Get-ChildItem "$env:LOCALAPPDATA\SentinelAI" -ErrorAction SilentlyContinue | Select-Object Name, Length
+            Write-Error "prova fallita (codice $($p.ExitCode))"; exit 1
+          }
 
       - name: Prova istanza unica (avviato due volte = un solo SentinelAI)
         shell: pwsh

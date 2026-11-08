@@ -594,6 +594,10 @@ def prova(out_file: str) -> int:
         nonlocal ok
         ok &= bool(cond)
         lines.append(("OK  " if cond else "NO  ") + what)
+        try:   # scritto man mano: se il programma muore (crash nativo) si vede fin dove è arrivato
+            Path(out_file).write_text("\n".join(lines) + "\n(in corso)\n", encoding="utf-8")
+        except OSError:
+            pass
 
     try:
         data = Path(tempfile.mkdtemp(prefix="sentinel-prova-"))
