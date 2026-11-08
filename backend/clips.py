@@ -140,6 +140,11 @@ def training_dir() -> Path:
     return Path(os.environ.get("DATA_DIR", ".")).resolve() / "addestramento"
 
 
+def _shrink(frame, width):
+    h, w = frame.shape[:2]
+    return cv2.resize(frame, (width, int(h * width / w)), interpolation=cv2.INTER_AREA) if w > width else frame
+
+
 def save_training_frames(camera_name: str, clip_id: str, wall_utc: datetime, tz_offset: int, frames) -> str | None:
     """1.0.11: salva i fotogrammi puliti di una clip (JPEG + riquadri visti dal modello in .json, utili come prima
     etichettatura). Si ferma oltre TRAIN_MAX_BYTES. Restituisce un avviso o None."""
@@ -153,6 +158,8 @@ def save_training_frames(camera_name: str, clip_id: str, wall_utc: datetime, tz_
         day.mkdir(parents=True, exist_ok=True)
         stem = f"{local.strftime('%H%M%S')}_{clip_id[:6]}"
         for n, (_, jpeg, tracks) in enumerate(frames):
+            if not isinstance(jpeg, (bytes, bytearray)):     # fotogramma del pre-allarme, non ancora compresso
+                jpeg = encode_jpeg(jpeg, TRAIN_WIDTH, 90)
             # prima il .json, poi il .jpg scritto su .tmp e rinominato: a disco pieno non restano immagini troncate
             # né immagini senza riquadri (agente di prova 111)
             meta = json.dumps([{k: t.get(k) for k in ("label", "class_id", "conf", "box", "fixed")} for t in tracks],
@@ -266,7 +273,12 @@ class ClipRecorder:
         clean = None
         if getattr(self.settings, "training_frames", False) and now - self.last_clean >= TRAIN_EVERY:
             self.last_clean = now
-            clean = (now, await asyncio.to_thread(encode_jpeg, frame, TRAIN_WIDTH, 90), tracks)
+            # 1.0.12 (CPU del CT): fuori dalle clip il fotogramma resta in memoria non compresso (al massimo
+            # clip_pre_seconds, ridotto a TRAIN_WIDTH): il JPEG si fa solo se diventa parte di una clip.
+            if self.active:
+                clean = (now, await asyncio.to_thread(encode_jpeg, frame, TRAIN_WIDTH, 90), tracks)
+            else:
+                clean = (now, _shrink(frame, TRAIN_WIDTH), tracks)
             self.clean.append(clean)
         while self.clean and now - self.clean[0][0] > self.settings.clip_pre_seconds:
             self.clean.popleft()

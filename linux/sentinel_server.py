@@ -120,7 +120,9 @@ def main():
                 h.setStream(sys.stderr)
     d.log(f"avvio SentinelAI {d.VERSION} su {host}:{a.porta}, dati in {data}, nomi ammessi: {', '.join(lan_ipv4())}")
     import uvicorn
-    uvicorn.run(app, host=host, port=a.porta, log_level="warning", ws_max_size=4 * 1024 * 1024)
+    uvicorn.run(app, host=host, port=a.porta, log_level="warning", ws_max_size=4 * 1024 * 1024,
+                # 1.0.12: niente compressione dei messaggi della diretta (JPEG in base64: non si comprime, costava CPU)
+                ws_per_message_deflate=False)
 
 
 if __name__ == "__main__":

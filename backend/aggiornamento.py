@@ -307,7 +307,7 @@ def installa_setup(setup: Path):
         "goto attendi",
         ":installa",
         f'"{_cmd(setup)}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG="{_cmd(registro)}"',
-        f'echo %ERRORLEVEL%> "{_cmd(esito)}"',
+        f'>"{_cmd(esito)}" echo %ERRORLEVEL%',   # "0> file" sarebbe il canale 0, non il numero 0 (CI)
         f'start "" "{_cmd(exe)}"',
         "",
     ]), encoding="oem" if os.name == "nt" else "utf-8")
