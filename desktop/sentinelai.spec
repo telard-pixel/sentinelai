@@ -8,7 +8,7 @@ hidden = (collect_submodules("uvicorn") + collect_submodules("websockets")
           + ["server", "session", "clips", "detection", "models", "telegram_bot", "auth_local", "docstore", "aggiornamento",
              "pystray._win32", "openpyxl", "imageio_ffmpeg", "tzdata", "zoneinfo",
              "webview.platforms.winforms", "webview.platforms.edgechromium", "clr",
-             "openvino", "openvino.runtime"])
+             "openvino", "openvino.runtime", "onnxruntime", "winreg"])
 
 a = Analysis(
     ["sentinel_desktop.py"],
@@ -20,7 +20,7 @@ a = Analysis(
           + collect_data_files("webview")
           + collect_data_files("openvino", excludes=["**/tools/**", "**/*.pyi"]),
     # 1.0.15: OpenVINO (DLL del motore e dei plugin CPU/GPU, plugins.xml)
-    binaries=collect_dynamic_libs("webview") + openvino_libs,
+    binaries=collect_dynamic_libs("webview") + openvino_libs + collect_dynamic_libs("onnxruntime"),
     hiddenimports=hidden,
     excludes=["torch", "torchvision", "ultralytics", "motor", "pandas", "matplotlib", "tkinter",
               "IPython", "scipy"],

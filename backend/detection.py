@@ -72,7 +72,8 @@ logger = logging.getLogger("detection")
 #   OpenVINO scheda video f32    68 ms, 0,07 s di CPU   (punteggi identici a OpenCV)
 # Sulla scheda video si resta in f32: in f16 sarebbe 38 ms ma i punteggi cambiano fino a 0,04, e cambierebbe
 # cosa supera le soglie. Su Windows (1.0.15) lo stesso: scheda video Intel se c'è (le NVIDIA/AMD OpenVINO non le
-# vede), altrimenti processore. SENTINEL_AI_MOTORE: auto (scheda video, poi processore, poi OpenCV) | cpu | opencv.
+# vede), altrimenti processore. SENTINEL_AI_MOTORE: auto (DirectML su Windows, scheda video Intel, processore, OpenCV) | directml
+# (anche senza scheda vera) | cpu | opencv.
 AI_MOTORE = os.environ.get("SENTINEL_AI_MOTORE", "auto").strip().lower()
 
 
@@ -98,12 +99,12 @@ def _uscite_attese(h: int, w: int) -> int:
     return sum((h // s) * (w // s) for s in (8, 16, 32))
 
 
-class _OpenVinoNet:
-    """Stessa interfaccia di cv2.dnn (setInput/forward). Se la scheda video si guasta mentre gira si passa a
-    OpenCV per sempre (fino al riavvio): meglio lenti che ciechi."""
+class _ReteConRiserva:
+    """Stessa interfaccia di cv2.dnn (setInput/forward) per OpenVINO e DirectML. Se il motore si guasta mentre
+    gira si passa a OpenCV per sempre (fino al riavvio): meglio lenti che ciechi."""
 
-    def __init__(self, request, device, detector=None):
-        self.request, self.device, self.blob, self.riserva = request, device, None, None
+    def __init__(self, run, nome, detector=None):
+        self.run, self.nome, self.blob, self.riserva = run, nome, None, None
         self.detector, self.avvisato = detector, False
 
     def setInput(self, blob):
@@ -112,11 +113,10 @@ class _OpenVinoNet:
     def forward(self):
         if self.riserva is None:
             try:
-                self.request.infer({0: self.blob})
-                return self.request.get_output_tensor(0).data.copy()
+                return self.run(self.blob)
             except Exception as exc:  # noqa: BLE001 - qualsiasi errore del motore: si ripiega
                 if not self.avvisato:   # un errore solo nel registro, anche se il ripiego non parte
-                    logger.error("IA: OpenVINO %s non risponde (%s): passo a OpenCV", self.device, exc)
+                    logger.error("IA: %s non risponde (%s): passo a OpenCV", self.nome, exc)
                     self.avvisato = True
                 self.riserva = _opencv_net()
                 if self.detector is not None:     # le Impostazioni mostrano il motore vero
@@ -125,14 +125,96 @@ class _OpenVinoNet:
         return self.riserva.forward()
 
 
+# 1.0.16 (Windows): DirectML (Microsoft, dentro Windows) usa qualsiasi scheda video DirectX 12: NVIDIA, AMD, Intel.
+# Su un PC senza scheda vera (o in una macchina virtuale) Windows offre una "scheda" software (WARP) che fa i conti
+# col processore: lenta e pesante. Si riconosce dal tempo di processore per analisi: con una scheda vera è di pochi
+# centesimi di secondo, con WARP decimi. Oltre questa soglia si salta DirectML e si passa a OpenVINO.
+DML_CPU_MAX = 0.08
+
+
+def schede_video():
+    """Nomi delle schede video installate (Windows, dal registro: niente programmi esterni né finestre)."""
+    if os.name != "nt":
+        return []
+    nomi = []
+    try:
+        import winreg
+        base = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as k:
+            for i in range(64):
+                try:
+                    sub = winreg.EnumKey(k, i)
+                except OSError:
+                    break
+                if not sub.isdigit():
+                    continue
+                try:
+                    with winreg.OpenKey(k, sub) as s:
+                        nome = str(winreg.QueryValueEx(s, "DriverDesc")[0]).strip()
+                except OSError:
+                    continue
+                if nome and nome not in nomi:
+                    nomi.append(nome)
+    except Exception:  # noqa: BLE001
+        pass
+    return nomi
+
+
+def scheda_principale(nomi):
+    """Quella che DirectML sceglie con "high_performance": la dedicata (NVIDIA/AMD) se c'è, sennò la prima vera."""
+    vere = [n for n in nomi if "microsoft" not in n.lower() and "basic" not in n.lower()]
+    dedicate = [n for n in vere if any(x in n.lower() for x in ("nvidia", "geforce", "quadro", "rtx", "radeon", "amd", "arc"))]
+    return (dedicate or vere or [""])[0]
+
+
+def _sessione_directml():
+    """(sessione, altezza, ms, s di CPU per analisi) di onnxruntime su DirectML, o eccezione."""
+    import onnxruntime as ort
+    if "DmlExecutionProvider" not in ort.get_available_providers():
+        raise RuntimeError("DirectML non disponibile")
+    so = ort.SessionOptions()
+    so.enable_mem_pattern = False                       # richiesto da DirectML
+    so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    so.intra_op_num_threads = _ai_threads()
+    so.log_severity_level = 3
+    sess, errore = None, None
+    # con due schede (portatile: Intel + NVIDIA) si chiede la più potente; le versioni che non conoscono le
+    # opzioni le rifiutano: allora la scheda principale
+    for opts in ({"device_id": 0, "performance_preference": "high_performance", "device_filter": "gpu"},
+                 {"device_id": 0}):
+        try:
+            sess = ort.InferenceSession(str(ONNX_PATH), so, providers=[("DmlExecutionProvider", opts)])
+            break
+        except Exception as exc:  # noqa: BLE001
+            errore = exc
+    if sess is None:
+        raise errore
+    if sess.get_providers()[0] != "DmlExecutionProvider":
+        raise RuntimeError(f"motore {sess.get_providers()}")
+    inp = sess.get_inputs()[0]
+    h = inp.shape[2] if isinstance(inp.shape[2], int) else IMG_H
+    if isinstance(inp.shape[3], int) and inp.shape[3] != IMGSZ:
+        raise RuntimeError(f"ingresso {inp.shape}")
+    x = np.zeros((1, 3, h, IMGSZ), dtype=np.float32)
+    out = sess.run(None, {inp.name: x})[0]
+    if tuple(out.shape) != (1, 84, _uscite_attese(h, IMGSZ)):
+        raise RuntimeError(f"uscita {out.shape}")
+    c0, t0 = time.process_time(), time.perf_counter()
+    for _ in range(3):
+        sess.run(None, {inp.name: x})
+    cpu, ms = (time.process_time() - c0) / 3, (time.perf_counter() - t0) / 3 * 1000
+    return sess, h, ms, cpu
+
+
 def _cartella_dati():
     return os.environ.get("SENTINEL_DATI") or os.environ.get("DATA_DIR")   # Linux / Windows
 
 
 class _ProvaMotore:
-    """Contro i crash NATIVI di OpenVINO o del driver all'avvio (agente 112, 1.0.15): un try non li ferma e il
+    """Contro i crash NATIVI di OpenVINO/DirectML o del driver all'avvio (agente 112, 1.0.15): un try non li ferma e il
     programma si chiuderebbe a ogni apertura. Prima di ogni passo si scrive cosa si sta provando; se all'avvio dopo
-    il file c'è ancora, quel passo ha fatto morire il programma e si salta (GPU → processore, OpenVINO → OpenCV)
+    il file c'è ancora, quel passo ha fatto morire il programma e si salta (DirectML → OpenVINO, GPU → processore,
+    OpenVINO → OpenCV)
     fino alla prossima versione. Così un PC con un driver rotto perde un avvio solo."""
 
     def __init__(self):
@@ -151,10 +233,10 @@ class _ProvaMotore:
             morto = self.sentinella.read_text(encoding="utf-8").strip()
         except Exception:  # noqa: BLE001
             morto = ""
-        if morto in ("OpenVINO", "GPU", "CPU"):
-            escludi = "OpenVINO" if morto in ("OpenVINO", "CPU") else "GPU"
+        if morto in ("OpenVINO", "GPU", "CPU", "DirectML"):
+            escludi = {"CPU": "OpenVINO", "GPU": "GPU"}.get(morto, morto)
             logger.warning("IA: l'avvio precedente si è chiuso provando %s: d'ora in poi lo salto "
-                           "(fino alla prossima versione)", "OpenVINO" if morto == "OpenVINO" else f"OpenVINO {morto}")
+                           "(fino alla prossima versione)", f"OpenVINO {morto}" if morto in ("GPU", "CPU") else morto)
             if escludi not in self.esclusi:
                 self.esclusi.append(escludi)
             try:
@@ -186,14 +268,42 @@ class Detector:
         self.engine = ""
 
     def _load_openvino(self) -> bool:
-        """Prova OpenVINO: scheda video (GPU), poi processore. False = resta OpenCV DNN."""
+        """Prova DirectML (Windows, qualsiasi scheda), poi OpenVINO: scheda video Intel, poi processore.
+        False = resta OpenCV DNN."""
         if AI_MOTORE == "opencv":
             return False
         prova = _ProvaMotore()
         try:
-            return self._load_openvino_davvero(prova)
+            return self._load_directml(prova) or self._load_openvino_davvero(prova)
         finally:
             prova.fatto()     # arrivati qui niente crash: la sentinella si toglie (resta solo se il processo muore)
+
+    def _load_directml(self, prova) -> bool:
+        global IMG_H
+        if os.name != "nt" or AI_MOTORE not in ("auto", "directml") or "DirectML" in prova.esclusi:
+            return False
+        prova.provo("DirectML")
+        logger.info("IA: schede video trovate: %s", ", ".join(schede_video()) or "nessuna")
+        try:
+            import onnxruntime  # noqa: F401
+        except Exception:  # noqa: BLE001 - non incluso (Linux) o libreria rotta
+            return False
+        try:
+            sess, h, ms, cpu = _sessione_directml()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("IA: DirectML non va (%s): provo OpenVINO", exc)
+            return False
+        if cpu > DML_CPU_MAX and AI_MOTORE != "directml":
+            logger.warning("IA: DirectML senza scheda video vera (%.0f ms, %.2f s di processore per analisi): "
+                           "provo OpenVINO", ms, cpu)
+            return False
+        IMG_H = h
+        nome = sess.get_inputs()[0].name
+        self.model, self.kind = _ReteConRiserva(lambda b: sess.run(None, {nome: b})[0], "DirectML", self), "onnx"
+        scheda = scheda_principale(schede_video())
+        self.engine = f"DirectML GPU ({scheda})" if scheda else "DirectML GPU"
+        logger.info("IA: DirectML %.0f ms, %.3f s di processore per analisi", ms, cpu)
+        return True
 
     def _load_openvino_davvero(self, prova) -> bool:
         global IMG_H
@@ -243,7 +353,9 @@ class Detector:
                     logger.warning("IA: OpenVINO %s %dx%d non va (%s)", dev, IMGSZ, h, exc)
                     continue
                 IMG_H = h
-                self.model, self.kind = _OpenVinoNet(request, dev, self), "onnx"
+                self.model, self.kind = _ReteConRiserva(
+                    lambda b, r=request: (r.infer({0: b}), r.get_output_tensor(0).data.copy())[1],
+                    f"OpenVINO {dev}", self), "onnx"
                 name = dev
                 if dev == "GPU":
                     try:

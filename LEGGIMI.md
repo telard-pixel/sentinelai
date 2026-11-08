@@ -147,6 +147,10 @@ OpenVINO sulla **scheda video Intel HD 630** 68 ms e 0,07 s, con punteggi identi
 
 - **Windows (1.0.15)**: stesso motore incluso nell'exe. Usa la scheda video se è Intel (anche accanto a una
   NVIDIA), altrimenti il processore con OpenVINO (circa il doppio più veloce di OpenCV).
+- **Windows (1.0.16), scelta automatica**: a ogni avvio il programma legge le schede video (registro di Windows)
+  e prova **DirectML** (Microsoft, qualsiasi scheda DirectX 12: NVIDIA, AMD, Intel). Se c'è solo la scheda
+  software di Windows (PC senza scheda o macchina virtuale: >0,08 s di processore per analisi) passa a OpenVINO
+  sul processore, poi OpenCV. Stessa sentinella contro i crash (DirectML → OpenVINO).
 - Il motore usato si vede in fondo alle Impostazioni ("IA OpenVINO GPU ...") e nel registro all'avvio.
 - Ordine: scheda video → processore → OpenCV. Se la scheda si guasta mentre gira, si passa a OpenCV fino al
   riavvio. `Environment=SENTINEL_AI_MOTORE=cpu` (solo processore) o `opencv` (come prima) nel servizio.

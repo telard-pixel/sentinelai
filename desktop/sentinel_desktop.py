@@ -614,8 +614,10 @@ def prova(out_file: str) -> int:
         check(h["model_loaded"], f"modello caricato: {h}")
         import detection
         check(detection.detector.kind == "onnx", f"motore: {detection.detector.kind}")
-        # 1.0.15: IA con OpenVINO anche su Windows (sul runner di GitHub non c'è scheda Intel: processore)
-        check(detection.detector.engine.startswith("OpenVINO"), f"IA con OpenVINO: {detection.detector.engine}")
+        # 1.0.16: scelta automatica. Sul runner di GitHub non c'è una scheda vera (solo quella software di Windows):
+        # DirectML va scartato e si usa OpenVINO sul processore.
+        check(detection.detector.engine.startswith(("DirectML", "OpenVINO")), f"motore IA scelto: {detection.detector.engine}")
+        lines.append(f"INFO schede video: {detection.schede_video()}")
         # Il plugin della scheda video deve essere nell'exe. Solo il file: chiedere get_versions("GPU") su un PC
         # senza scheda Intel (il runner) fa morire il processo (0xC0000005, CI 8/11/2026).
         import openvino
@@ -642,6 +644,22 @@ def prova(out_file: str) -> int:
         ms = (time.time() - t0) / max(1, len(dets)) * 1000
         people = sum(1 for d in dets for c, _, _ in d if c == 0)
         check(people >= 3, f"persone riconosciute nel demo: {people} in {len(dets)} fotogrammi ({ms:.0f} ms a fotogramma)")
+
+        # 1.0.16: DirectML incluso e con gli stessi risultati di OpenCV (qui sulla scheda software di Windows)
+        import numpy as np
+        try:
+            sess, hh, dms, dcpu = detection._sessione_directml()
+            ref = detection._opencv_net()
+            diff = 0.0
+            for f in frames[::30]:
+                blob = cv2.dnn.blobFromImage(cv2.resize(f, (detection.IMGSZ, hh)), 1 / 255.0, (detection.IMGSZ, hh), swapRB=True)
+                ref.setInput(blob)
+                a = ref.forward()
+                b = sess.run(None, {sess.get_inputs()[0].name: blob})[0]
+                diff = max(diff, float(np.abs(a[0, 4:] - b[0, 4:]).max()))
+            check(diff < 0.01, f"DirectML uguale a OpenCV (differenza max {diff:.4f}; {dms:.0f} ms, {dcpu:.2f} s di CPU)")
+        except Exception as exc:  # noqa: BLE001
+            check(False, f"DirectML: {exc}")
 
         from websockets.sync.client import connect
         with connect(f"ws://127.0.0.1:{port}/api/ws/stream?token=", max_size=8 * 1024 * 1024) as ws:
