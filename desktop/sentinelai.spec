@@ -1,9 +1,8 @@
 # PyInstaller: SentinelAI.exe (cartella), con server, app compilata e modello YOLO11s ONNX.
 from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
-# OpenVINO (1.0.15): servono il nucleo, i plugin CPU/GPU, TBB e il lettore ONNX; via i lettori di altri formati
-_NON_SERVE = ("tensorflow", "pytorch", "paddle", "jax")
-openvino_libs = [b for b in collect_dynamic_libs("openvino") if not any(x in b[0].lower() for x in _NON_SERVE)]
+# OpenVINO (1.0.15): tutte le DLL (togliere i lettori TensorFlow/PyTorch/Paddle fa chiudere l'exe: import openvino li carica)
+openvino_libs = collect_dynamic_libs("openvino")
 
 hidden = (collect_submodules("uvicorn") + collect_submodules("websockets")
           + ["server", "session", "clips", "detection", "models", "telegram_bot", "auth_local", "docstore", "aggiornamento",
@@ -19,7 +18,7 @@ a = Analysis(
            ("../backend/chiave_pubblica.pem", ".")]
           + collect_data_files("imageio_ffmpeg", includes=["binaries/*"]) + collect_data_files("tzdata")
           + collect_data_files("webview")
-          + collect_data_files("openvino", excludes=["**/tools/**", "**/*.pyi", "**/*.lib", "**/*.h", "**/*.hpp"]),
+          + collect_data_files("openvino", excludes=["**/tools/**", "**/*.pyi"]),
     # 1.0.15: OpenVINO (DLL del motore e dei plugin CPU/GPU, plugins.xml)
     binaries=collect_dynamic_libs("webview") + openvino_libs,
     hiddenimports=hidden,
