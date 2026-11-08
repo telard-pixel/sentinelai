@@ -16,6 +16,7 @@ STATO_DIR=${STATO_DIR:-/run/sentinelai-aggiorna}
 UNITA=${UNITA:-/etc/systemd/system}
 API=${API:-https://api.github.com/repos/telard-pixel/sentinelai-rilasci/releases/latest}
 SCARICA=${SCARICA:-https://github.com/telard-pixel/sentinelai-rilasci/releases/download}
+ALLEGATI=${ALLEGATI:-https://api.github.com/repos/telard-pixel/sentinelai-rilasci/releases/assets}
 SALUTE=${SALUTE:-http://127.0.0.1:8765/api/health}
 ATTESA=${ATTESA:-120}
 SYSTEMCTL=${SYSTEMCTL:-systemctl}
@@ -54,9 +55,23 @@ if ! "$PY" -I -c 'import re,sys; n=lambda v: tuple(int(x) for x in re.match(r"v?
     exit 0
 fi
 
+# 1.0.13: prima dall'API (allegato per numero), poi dall'indirizzo github.com/.../releases/download: l'8/11/2026
+# quest'ultimo dava 504 per ore mentre l'API funzionava. Chi lo manda non conta: vale solo la firma.
+scarica() {   # nome, destinazione, secondi massimi
+    id=$("$PY" -I - "$T/ultima.json" "$1" <<'EOF2'
+import json, sys
+for a in json.load(open(sys.argv[1], encoding="utf-8")).get("assets", []):
+    if a.get("name") == sys.argv[2] and str(a.get("id", "")).isdigit():
+        print(a["id"]); break
+EOF2
+)
+    if [ -n "$id" ] && curl -fsSL --retry 2 --max-time "$3" -H "Accept: application/octet-stream" -o "$2" "$ALLEGATI/$id"; then return 0; fi
+    curl -fsSL --retry 2 --max-time "$3" -o "$2" "$SCARICA/$TAG/$1"
+}
+
 stato scarico "Scarico e controllo la firma"
 for f in rilascio.json rilascio.json.sig; do
-    curl -fsSL --max-time 60 -o "$T/$f" "$SCARICA/$TAG/$f" || fine "Versione non ancora firmata"
+    scarica "$f" "$T/$f" 60 || fine "Versione non scaricabile da GitHub (o non ancora firmata)"
 done
 openssl dgst -sha256 -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:auto -verify "$DIR/backend/chiave_pubblica.pem" \
     -signature "$T/rilascio.json.sig" "$T/rilascio.json" >/dev/null 2>&1 || fine "FIRMA NON VALIDA: non installata"
@@ -74,7 +89,7 @@ EOF
 [ -n "$INFO" ] || fine "Il certificato non corrisponde alla versione"
 NOME=${INFO% *}
 SHA=${INFO#* }
-curl -fsSL --max-time 600 -o "$T/$NOME" "$SCARICA/$TAG/$NOME" || fine "Pacchetto non scaricato"
+scarica "$NOME" "$T/$NOME" 600 || fine "Pacchetto non scaricato"
 [ "$(sha256sum "$T/$NOME" | cut -d' ' -f1)" = "$SHA" ] || fine "Il pacchetto non corrisponde al certificato"
 
 stato installo "Installo la versione nuova"

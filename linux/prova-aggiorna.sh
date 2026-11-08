@@ -54,13 +54,16 @@ pubblica() {   # tag, chiave per firmare, [contenuto server.py], [sha256 da scri
     printf '{"progetto":"sentinelai","tag":"%s","versione":"%s","linux":{"nome":"%s","sha256":"%s"}}' "$tag" "$v" "$nome" "$sha" > "$W/rel/$tag/rilascio.json"
     openssl dgst -sha256 -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 -sign "$2" \
         -out "$W/rel/$tag/rilascio.json.sig" "$W/rel/$tag/rilascio.json"
-    printf '{"tag_name":"%s"}' "$tag" > "$W/rel/ultima.json"
+    # allegati anche per numero, come l'API di GitHub (1.0.13)
+    mkdir -p "$W/assets"; rm -f "$W/assets/"*
+    cp "$W/rel/$tag/rilascio.json" "$W/assets/11"; cp "$W/rel/$tag/rilascio.json.sig" "$W/assets/12"; cp "$W/rel/$tag/$nome" "$W/assets/13"
+    printf '{"tag_name":"%s","assets":[{"name":"rilascio.json","id":11},{"name":"rilascio.json.sig","id":12},{"name":"%s","id":13}]}' "$tag" "$nome" > "$W/rel/ultima.json"
 }
 
 esegui() {   # [salute: ok | ko]
     if [ "${1:-ok}" = ok ]; then echo '{"status":"ok"}' > "$W/salute.json"; else echo '{}' > "$W/salute.json"; fi
     W_LOG="$W/systemctl.log" DIR="$W/opt" DATI="$W/dati" STATO_DIR="$W/run" UNITA="$W/unita" LOG="$W/agg.log" \
-        API="file://$W/rel/ultima.json" SCARICA="file://$W/rel" SALUTE="file://$W/salute.json" ATTESA=3 \
+        API="file://$W/rel/ultima.json" SCARICA="${SCARICA_PROVA:-file://$W/rel}" ALLEGATI="${ALLEGATI_PROVA:-file://$W/assets}" SALUTE="file://$W/salute.json" ATTESA=3 \
         SYSTEMCTL="$W/systemctl" sh "$QUI/linux/aggiorna.sh" || true
 }
 
@@ -117,6 +120,18 @@ echo "== 8. cartella della richiesta come collegamento simbolico"
 installa_vecchia; mkdir -p "$W/vittima"; echo x > "$W/vittima/richiesta"
 rm -rf "$W/dati/aggiornamento"; ln -s "$W/vittima" "$W/dati/aggiornamento"; pubblica v1.0.11 "$W/k.pem"; esegui ok
 controlla "il collegamento non si attraversa" '[ -e $W/vittima/richiesta ]'
+
+echo "== 10. github.com/releases/download guasto: si scarica dall'API"
+installa_vecchia; pubblica v1.0.12 "$W/k.pem"; SCARICA_PROVA="file://$W/non-esiste" esegui ok
+controlla "installata dall'API" '[ "$(cat $W/opt/VERSIONE)" = 1.0.12 ]'
+
+echo "== 11. API guasta: si scarica da github.com/releases/download"
+installa_vecchia; pubblica v1.0.12 "$W/k.pem"; ALLEGATI_PROVA="file://$W/non-esiste" esegui ok
+controlla "installata dall'altro indirizzo" '[ "$(cat $W/opt/VERSIONE)" = 1.0.12 ]'
+
+echo "== 12. tutti e due guasti"
+installa_vecchia; pubblica v1.0.12 "$W/k.pem"; SCARICA_PROVA="file://$W/non-esiste" ALLEGATI_PROVA="file://$W/non-esiste" esegui ok
+controlla "resta la vecchia con messaggio chiaro" '[ "$(cat $W/opt/VERSIONE)" = 1.0.11 ] && grep -q "non scaricabile" $W/run/stato.json'
 
 echo "== 9. spostamento che fallisce a metà"
 mkdir -p "$W/bin"; printf '#!/bin/sh\ncase "$*" in *nuova/desktop*) exit 1 ;; esac\nexec /bin/mv "$@"\n' > "$W/bin/mv"; chmod +x "$W/bin/mv"

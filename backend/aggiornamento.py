@@ -31,6 +31,7 @@ logger = logging.getLogger("sentinelai.aggiornamento")
 REPO = "telard-pixel/sentinelai-rilasci"
 API_ULTIMA = f"https://api.github.com/repos/{REPO}/releases/latest"
 SCARICA = f"https://github.com/{REPO}/releases/download"
+ALLEGATI = f"https://api.github.com/repos/{REPO}/releases/assets"
 MANIFESTO, FIRMA = "rilascio.json", "rilascio.json.sig"
 NOME_SETUP = re.compile(r"SentinelAI-Setup-\d+\.\d+\.\d+\.exe")
 NOME_LINUX = re.compile(r"SentinelAI-linux-\d+\.\d+\.\d+\.tar\.gz")
@@ -106,6 +107,22 @@ def _scarica(url: str, dest: Path, atteso_max=600 * 1024 * 1024, avanzamento=Non
             pass
 
 
+def _scarica_allegato(tag: str, nome: str, dest: Path, allegati: dict, atteso_max=600 * 1024 * 1024, avanzamento=None):
+    """1.0.13: prima dall'API (allegato per numero), poi da github.com/.../releases/download. L'8/11/2026 il secondo
+    dava 504 per ore mentre l'API funzionava. Chi manda il file non conta: vale solo la firma."""
+    errore = None
+    aid = allegati.get(nome)
+    if aid:
+        try:
+            return _scarica(f"{ALLEGATI}/{aid}", dest, atteso_max, avanzamento)
+        except ErroreAggiornamento as e:
+            errore = e
+    try:
+        return _scarica(f"{SCARICA}/{tag}/{nome}", dest, atteso_max, avanzamento)
+    except ErroreAggiornamento:
+        raise errore or ErroreAggiornamento("versione non scaricabile da GitHub")
+
+
 def controlla(forza: bool = False) -> dict:
     """Ultima versione pubblicata. Tenuta 10 minuti: GitHub ammette 60 domande l'ora senza login."""
     now = time.monotonic()
@@ -119,11 +136,12 @@ def controlla(forza: bool = False) -> dict:
             with _get(API_ULTIMA) as r:
                 j = json.load(r)
             nomi = {a.get("name") for a in j.get("assets", [])}
+            allegati = {a.get("name"): a.get("id") for a in j.get("assets", []) if str(a.get("id", "")).isdigit()}
             tag = j.get("tag_name", "")
             dati = {"ultima": tag if TAG.fullmatch(tag) else "", "note": (j.get("body") or "")[:2000],
                     "data": j.get("published_at"), "firmata": MANIFESTO in nomi and FIRMA in nomi,
                     "windows": any(NOME_SETUP.fullmatch(n or "") for n in nomi),
-                    "linux": any(NOME_LINUX.fullmatch(n or "") for n in nomi), "errore": ""}
+                    "linux": any(NOME_LINUX.fullmatch(n or "") for n in nomi), "errore": "", "allegati": allegati}
         except urllib.error.HTTPError as e:
             dati = {"ultima": "", "errore": "nessuna versione pubblicata" if e.code == 404 else f"GitHub ha risposto {e.code}"}
         except (OSError, ValueError) as e:
@@ -232,8 +250,12 @@ def avvia() -> dict:
             raise ErroreAggiornamento("aggiornamento già in corso")
         _stato.update(fase="scarico", messaggio="Scarico la versione nuova…", percentuale=0, versione=info["ultima"],
                       richiesto_alle=None)
-    fn = _windows if info["modo"] == "windows" else _linux
-    threading.Thread(target=fn, args=(info["ultima"],), daemon=True, name="aggiornamento").start()
+    if info["modo"] == "windows":
+        args = (info["ultima"], info.get("allegati") or {})
+        fn = _windows
+    else:
+        args, fn = (info["ultima"],), _linux
+    threading.Thread(target=fn, args=args, daemon=True, name="aggiornamento").start()
     return stato()
 
 
@@ -251,22 +273,22 @@ def _linux(tag: str):
         _imposta(fase="errore", messaggio=f"Richiesta non scritta ({type(e).__name__})", percentuale=None)
 
 
-def _windows(tag: str):
+def _windows(tag: str, allegati: dict):
     cartella = Path(os.environ.get("DATA_DIR", ".")).resolve() / "aggiornamento"
     try:
         cartella.mkdir(exist_ok=True)
         for f in cartella.glob("SentinelAI-Setup-*.exe"):
             f.unlink(missing_ok=True)
         man, fir = cartella / MANIFESTO, cartella / FIRMA
-        _scarica(f"{SCARICA}/{tag}/{MANIFESTO}", man, 1 << 20)
-        _scarica(f"{SCARICA}/{tag}/{FIRMA}", fir, 1 << 16)
+        _scarica_allegato(tag, MANIFESTO, man, allegati, 1 << 20)
+        _scarica_allegato(tag, FIRMA, fir, allegati, 1 << 16)
         m = leggi_manifesto(man.read_bytes(), fir.read_bytes(), tag, versione_attuale())
         w = m.get("windows") or {}
         nome, sha = str(w.get("nome", "")), str(w.get("sha256", ""))
         if not NOME_SETUP.fullmatch(nome) or not re.fullmatch(r"[0-9a-f]{64}", sha):
             raise ErroreAggiornamento("certificato senza installer Windows")
         setup = cartella / nome
-        _scarica(f"{SCARICA}/{tag}/{nome}", setup, avanzamento=lambda p: _imposta(percentuale=p))
+        _scarica_allegato(tag, nome, setup, allegati, avanzamento=lambda p: _imposta(percentuale=p))
         if impronta(setup) != sha:
             setup.unlink(missing_ok=True)
             raise ErroreAggiornamento("l'installer scaricato non corrisponde al certificato: non installato")
