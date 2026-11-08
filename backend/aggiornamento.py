@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger("sentinelai.aggiornamento")
@@ -43,7 +44,7 @@ chiudi_app = None
 
 _lock = threading.Lock()
 _cache = {"t": 0.0, "dati": None}
-_stato = {"fase": "fermo", "messaggio": "", "percentuale": None, "versione": None}
+_stato = {"fase": "fermo", "messaggio": "", "percentuale": None, "versione": None, "richiesto_alle": None}
 
 
 class ErroreAggiornamento(Exception):
@@ -190,13 +191,29 @@ def _imposta(**kw):
 def stato() -> dict:
     with _lock:
         s = dict(_stato)
+    s["servizio"], s["servizio_recente"] = None, False
     if modo() == "linux":
         try:
             j = json.loads(STATO_LINUX.read_text(encoding="utf-8"))
             s["servizio"] = {k: str(j.get(k, ""))[:300] for k in ("fase", "messaggio", "tag", "ora")}
-        except (OSError, ValueError):
-            s["servizio"] = None
+            # recente = scritto dal servizio root DOPO la nostra richiesta (orologio del CT, non del telefono)
+            # (dopo un riavvio questo processo non sa quando è partita la richiesta: valgono gli ultimi 10 minuti)
+            ora = datetime.fromisoformat(s["servizio"]["ora"]).timestamp()
+            s["servizio_recente"] = ora >= s["richiesto_alle"] - 2 if s["richiesto_alle"] else time.time() - ora < 600
+        except (OSError, ValueError, TypeError):
+            pass
     return s
+
+
+def _occupato() -> bool:
+    """Un aggiornamento è già in corso? Su Linux la richiesta scade se il servizio root ha finito o dopo 20 minuti."""
+    s = stato()
+    if s["fase"] in ("scarico", "installo"):
+        return True
+    if s["fase"] == "richiesto":
+        finito = s["servizio_recente"] and s["servizio"]["fase"] in ("errore", "fatto")
+        return not finito and time.time() - (s["richiesto_alle"] or 0) < 1200
+    return False
 
 
 def avvia() -> dict:
@@ -208,10 +225,13 @@ def avvia() -> dict:
         raise ErroreAggiornamento(info["errore"])
     if not info["disponibile"]:
         raise ErroreAggiornamento("nessuna versione nuova da installare")
+    if _occupato():
+        raise ErroreAggiornamento("aggiornamento già in corso")
     with _lock:
-        if _stato["fase"] in ("scarico", "installo", "richiesto"):
+        if _stato["fase"] in ("scarico", "installo"):
             raise ErroreAggiornamento("aggiornamento già in corso")
-        _stato.update(fase="scarico", messaggio="Scarico la versione nuova…", percentuale=0, versione=info["ultima"])
+        _stato.update(fase="scarico", messaggio="Scarico la versione nuova…", percentuale=0, versione=info["ultima"],
+                      richiesto_alle=None)
     fn = _windows if info["modo"] == "windows" else _linux
     threading.Thread(target=fn, args=(info["ultima"],), daemon=True, name="aggiornamento").start()
     return stato()
@@ -222,6 +242,7 @@ def _linux(tag: str):
     try:
         d = Path(os.environ.get("DATA_DIR", ".")).resolve() / "aggiornamento"
         d.mkdir(mode=0o700, exist_ok=True)
+        _imposta(richiesto_alle=time.time())
         (d / "richiesta").write_text(tag, encoding="utf-8")
         _imposta(fase="richiesto", messaggio="Installo la versione nuova: SentinelAI si riavvierà da solo…",
                  percentuale=None)

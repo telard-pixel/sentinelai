@@ -664,6 +664,15 @@ def prova(out_file: str) -> int:
         lg = get("/api/log?lines=200")
         check(lg["available"] and "YOLO11s caricato" in lg["text"], "registro leggibile dall'app")
         check(get("/api/monitor") == {}, "nessuna telecamera di rete accesa all'avvio")
+        # 1.0.12: aggiornamento dall'app. La chiave pubblica e cryptography devono essere nell'exe; una firma falsa
+        # va rifiutata (senza eccezioni); l'API risponde (la rete verso GitHub può mancare: conta solo che risponda).
+        import aggiornamento
+        check(b"BEGIN PUBLIC KEY" in aggiornamento.chiave_pubblica(), "chiave pubblica per gli aggiornamenti inclusa")
+        check(aggiornamento.firma_valida(b"prova", b"\0" * 384) is False, "firma falsa rifiutata")
+        info = get("/api/aggiornamento")
+        lines.append(f"INFO aggiornamento: {info}")
+        check(info["attuale"] == VERSION and info["modo"] == ("windows" if FROZEN and os.name == "nt" else ""),
+              "controllo aggiornamenti")
     except Exception:
         ok = False
         lines.append("ERRORE\n" + traceback.format_exc())

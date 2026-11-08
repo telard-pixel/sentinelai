@@ -43,7 +43,7 @@ export default function UpdateSection() {
         }
         const s = (await http.get("/aggiornamento/stato")).data;
         const srv = s.servizio;
-        const srvNow = srv && srv.tag === target && Date.parse(srv.ora) >= since - 5000;
+        const srvNow = srv && srv.tag === target && s.servizio_recente;
         if (s.fase === "errore" || (srvNow && srv.fase === "errore")) {
           setRun(null);
           toast.error("Aggiornamento non riuscito", { description: (srvNow && srv.fase === "errore" ? srv.messaggio : s.messaggio) || "" });
