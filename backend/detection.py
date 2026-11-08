@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 import os
@@ -71,7 +72,7 @@ logger = logging.getLogger("detection")
 #   OpenVINO scheda video f32    68 ms, 0,07 s di CPU   (punteggi identici a OpenCV)
 # Sulla scheda video si resta in f32: in f16 sarebbe 38 ms ma i punteggi cambiano fino a 0,04, e cambierebbe
 # cosa supera le soglie. Su Windows (1.0.15) lo stesso: scheda video Intel se c'è (le NVIDIA/AMD OpenVINO non le
-# usa), altrimenti processore. SENTINEL_AI_MOTORE: auto (scheda video, poi processore, poi OpenCV) | cpu | opencv.
+# vede), altrimenti processore. SENTINEL_AI_MOTORE: auto (scheda video, poi processore, poi OpenCV) | cpu | opencv.
 AI_MOTORE = os.environ.get("SENTINEL_AI_MOTORE", "auto").strip().lower()
 
 
@@ -124,6 +125,56 @@ class _OpenVinoNet:
         return self.riserva.forward()
 
 
+def _cartella_dati():
+    return os.environ.get("SENTINEL_DATI") or os.environ.get("DATA_DIR")   # Linux / Windows
+
+
+class _ProvaMotore:
+    """Contro i crash NATIVI di OpenVINO o del driver all'avvio (agente 112, 1.0.15): un try non li ferma e il
+    programma si chiuderebbe a ogni apertura. Prima di ogni passo si scrive cosa si sta provando; se all'avvio dopo
+    il file c'è ancora, quel passo ha fatto morire il programma e si salta (GPU → processore, OpenVINO → OpenCV)
+    fino alla prossima versione. Così un PC con un driver rotto perde un avvio solo."""
+
+    def __init__(self):
+        d = _cartella_dati()
+        self.sentinella = Path(d) / "openvino-in-prova.txt" if d else None
+        self.registro = Path(d) / "openvino-esclusi.json" if d else None
+        versione = os.environ.get("SENTINEL_VERSION", "")
+        self.esclusi = []
+        try:
+            dati = json.loads(self.registro.read_text(encoding="utf-8"))
+            if dati.get("versione") == versione:
+                self.esclusi = [str(x) for x in dati.get("esclusi", [])]
+        except Exception:  # noqa: BLE001 - nessun file o file rovinato: si riparte da zero
+            pass
+        try:
+            morto = self.sentinella.read_text(encoding="utf-8").strip()
+        except Exception:  # noqa: BLE001
+            morto = ""
+        if morto in ("OpenVINO", "GPU", "CPU"):
+            escludi = "OpenVINO" if morto in ("OpenVINO", "CPU") else "GPU"
+            logger.warning("IA: l'avvio precedente si è chiuso provando %s: d'ora in poi lo salto "
+                           "(fino alla prossima versione)", "OpenVINO" if morto == "OpenVINO" else f"OpenVINO {morto}")
+            if escludi not in self.esclusi:
+                self.esclusi.append(escludi)
+            try:
+                self.registro.write_text(json.dumps({"versione": versione, "esclusi": self.esclusi}), encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                pass
+
+    def provo(self, passo):
+        try:
+            self.sentinella.write_text(passo, encoding="utf-8")
+        except Exception:  # noqa: BLE001 - senza cartella dati niente protezione, ma si parte lo stesso
+            pass
+
+    def fatto(self):
+        try:
+            self.sentinella.unlink()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 class Detector:
     """YOLO11s. Con models/yolo11s.onnx gira con OpenCV DNN (versione Windows: niente PyTorch);
     altrimenti con Ultralytics come nel progetto originale (versione Docker)."""
@@ -136,16 +187,26 @@ class Detector:
 
     def _load_openvino(self) -> bool:
         """Prova OpenVINO: scheda video (GPU), poi processore. False = resta OpenCV DNN."""
-        global IMG_H
         if AI_MOTORE == "opencv":
             return False
+        prova = _ProvaMotore()
+        try:
+            return self._load_openvino_davvero(prova)
+        finally:
+            prova.fatto()     # arrivati qui niente crash: la sentinella si toglie (resta solo se il processo muore)
+
+    def _load_openvino_davvero(self, prova) -> bool:
+        global IMG_H
+        if "OpenVINO" in prova.esclusi:
+            return False
+        prova.provo("OpenVINO")      # anche l'import e l'elenco dei dispositivi caricano i plugin (driver)
         try:
             import openvino as ov
-        except Exception:  # noqa: BLE001 - non installato (Windows) o libreria rotta
+        except Exception:  # noqa: BLE001 - non installato o libreria rotta
             return False
         try:
             core = ov.Core()
-            cache = os.environ.get("SENTINEL_DATI") or os.environ.get("DATA_DIR")   # Linux / Windows
+            cache = _cartella_dati()
             if cache:   # il modello compilato per la scheda video si tiene: riavvio in 1-2 s invece di 8
                 try:
                     core.set_property({"CACHE_DIR": str(Path(cache) / "cache-openvino")})
@@ -157,7 +218,11 @@ class Detector:
             return False
         order = ["CPU"] if AI_MOTORE == "cpu" else ["GPU", "CPU"]
         for dev in order:
-            # con più schede video OpenVINO le chiama GPU.0, GPU.1 (es. Intel + NVIDIA su Windows): "GPU" = la prima
+            if dev in prova.esclusi:
+                continue
+            prova.provo(dev)
+            # con più schede Intel (integrata + Arc) OpenVINO le chiama GPU.0, GPU.1: "GPU" = la prima.
+            # Le NVIDIA/AMD il plugin GPU non le vede proprio.
             if not any(d == dev or d.startswith(dev + ".") for d in devices):
                 continue
             for h in dict.fromkeys((IMG_H, IMGSZ)):     # 640x448, poi modello quadrato (vecchia cache)

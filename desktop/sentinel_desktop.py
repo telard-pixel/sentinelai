@@ -612,6 +612,12 @@ def prova(out_file: str) -> int:
         check(detection.detector.kind == "onnx", f"motore: {detection.detector.kind}")
         # 1.0.15: IA con OpenVINO anche su Windows (sul runner di GitHub non c'è scheda Intel: processore)
         check(detection.detector.engine.startswith("OpenVINO"), f"IA con OpenVINO: {detection.detector.engine}")
+        try:   # il plugin della scheda video è nell'exe e si carica (anche senza scheda Intel, come sul runner)
+            import openvino as ov
+            gpu = ov.Core().get_versions("GPU")
+            check(bool(gpu), f"plugin GPU di OpenVINO incluso: {', '.join(f'{k} {v.build_number}' for k, v in gpu.items())}")
+        except Exception as exc:  # noqa: BLE001
+            check(False, f"plugin GPU di OpenVINO incluso: {exc}")
         cams = get("/api/cameras")
         check(cams and cams[0]["type"] == "demo", "telecamera demo")
         page = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10).read()
