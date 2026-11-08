@@ -60,6 +60,7 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
       <div className="flex items-center gap-2 border-b border-white/10 bg-raised px-3 py-2">
         <Icon className="h-3.5 w-3.5 text-emerald-400" />
         <span className="truncate font-heading text-sm font-semibold text-gray-100" data-testid={`camera-name-${camera.id}`}>{camera.name}</span>
+        {camera.prova && <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-sky-300" data-testid={`camera-prova-${camera.id}`}>prova</span>}
         <span className="rounded border border-white/10 px-1.5 py-0.5 font-mono text-[9px] uppercase text-gray-500">{SOURCE_META[camera.type].label}</span>
         <div className="ml-auto flex items-center gap-1">
           <input ref={fileRef} type="file" accept="video/*" className="hidden" data-testid={`camera-file-input-${camera.id}`}

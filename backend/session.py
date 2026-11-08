@@ -135,7 +135,10 @@ class StreamSession:
         dx, dy = src[-1][0] - src[0][0], src[-1][1] - src[0][1]
         name, arrow, ang = heading_of(dx, dy, 0.0)
         cat = category_of(tr.cls)
-        rule = f"Zona «{zone.name}»" if zone else match_rule(self.settings, cat, direction, self.tz_offset)
+        if getattr(self.camera, "prova", False):   # 1.0.17: telecamera di prova, mai allarmi/Telegram/clip
+            rule = None
+        else:
+            rule = f"Zona «{zone.name}»" if zone else match_rule(self.settings, cat, direction, self.tz_offset)
         eid = str(uuid.uuid4())
         clip_id = await self.recorder.trigger(time.monotonic(), eid) if rule else None
         ev = Event(id=eid, clip_id=clip_id, type=etype, source=self.camera.type, camera_id=self.camera.id,

@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ZoneFields } from "@/components/ZoneDialog";
 import { SOURCE_META } from "@/components/CameraTile";
 
-const NEW_CAMERA = { name: "", type: "nvr", url: "", device_id: "", nvr_brand: "hikvision", nvr_host: "", nvr_port: 554, nvr_username: "", nvr_password: "", nvr_channel: 1, nvr_stream: "sub", nvr_path: "", line: { enabled: true, x1: 0.08, y1: 0.62, x2: 0.92, y2: 0.62, invert: false }, zones: [] };
+const NEW_CAMERA = { name: "", type: "nvr", url: "", device_id: "", nvr_brand: "hikvision", nvr_host: "", nvr_port: 554, nvr_username: "", nvr_password: "", nvr_channel: 1, nvr_stream: "sub", nvr_path: "", prova: false, line: { enabled: true, x1: 0.08, y1: 0.62, x2: 0.92, y2: 0.62, invert: false }, zones: [] };
 
 const inp = "h-9 border-white/10 bg-black/30 font-mono text-xs";
 
@@ -101,6 +101,10 @@ export default function CameraDialog({ camera, onClose, onSave, onDelete }) {
         <div className="space-y-4">
           <Input data-testid="camera-name-input" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="Nome (es. Ingresso principale)" className="h-9 border-white/10 bg-black/30" />
           <SourceFields d={d} setD={setD} />
+          <label className="flex items-start gap-2 rounded-md border border-white/10 p-3" data-testid="camera-prova">
+            <Switch data-testid="camera-prova-switch" checked={!!d.prova} onCheckedChange={(v) => setD({ ...d, prova: v })} />
+            <span className="text-xs text-gray-400"><span className="font-semibold text-gray-200">Telecamera di prova</span>: l'IA analizza e conta, ma non manda mai allarmi, foto su Telegram né clip (per esempio una webcam pubblica del traffico).</span>
+          </label>
           {d.type === "nvr" && !d.nvr_host.trim() && (
             <p data-testid="nvr-host-missing-warning" className="font-mono text-[11px] text-amber-400">Senza indirizzo NVR la telecamera verrà salvata come disattivata.</p>
           )}

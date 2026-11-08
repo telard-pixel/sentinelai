@@ -65,6 +65,9 @@ class CameraIn(BaseModel):
     device_id: str = ""
     #: RTSP/NVR: il server la tiene sotto controllo di continuo, anche a finestra chiusa (si spegne con "Ferma").
     monitor: bool = False
+    #: 1.0.17: telecamera di prova (es. webcam pubblica del traffico): l'IA analizza e registra gli eventi, ma non
+    #: scattano mai allarmi, foto su Telegram né clip (le regole di allarme valgono per tutte le telecamere).
+    prova: bool = False
     line: Line = Line()
     zones: List[Zone] = []
 
