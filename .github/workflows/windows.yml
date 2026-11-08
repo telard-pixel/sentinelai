@@ -52,7 +52,7 @@ jobs:
           C:\esporta\Scripts\python -c "import torch; print('torch', torch.__version__)"
           # 1.0.9 (revisione): il .pt si scarica da un indirizzo fisso e si controlla l'impronta prima di aprirlo
           # (torch.load di un file alterato può eseguire codice).
-          Invoke-WebRequest -Uri https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt -OutFile yolo11s.pt
+          Invoke-WebRequest -Uri https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt -OutFile yolo11s.pt -MaximumRetryCount 6 -RetryIntervalSec 30
           $h = (Get-FileHash yolo11s.pt -Algorithm SHA256).Hash.ToLower()
           if ($h -ne '85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5') { Write-Error "yolo11s.pt con impronta sbagliata: $h"; exit 1 }
           C:\esporta\Scripts\python -c "from ultralytics import YOLO; YOLO('yolo11s.pt').export(format='onnx', imgsz=(448, 640), opset=12, simplify=False, dynamic=False)"
