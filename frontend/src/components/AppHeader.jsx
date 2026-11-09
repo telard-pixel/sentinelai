@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Download, LogOut, Settings2, ShieldHalf } from "lucide-react";
+import { Activity, Download, LogOut, Settings2, ShieldHalf } from "lucide-react";
 import { useLocalAuth } from "@/components/auth/LocalAuthProvider";
+import ResourcesDialog from "@/components/ResourcesDialog";
 
 const TABS = [
   ["monitor", "Monitor"],
@@ -22,6 +23,7 @@ function Clock() {
 export default function AppHeader({ tab, setTab, modelOk, alertCount, onSettings }) {
   const auth = useLocalAuth();
   const [installEvt, setInstallEvt] = useState(null);
+  const [risorse, setRisorse] = useState(false);   // 1.0.19: monitor risorse
   useEffect(() => {
     const h = (e) => { e.preventDefault(); setInstallEvt(e); };
     window.addEventListener("beforeinstallprompt", h);
@@ -68,6 +70,8 @@ export default function AppHeader({ tab, setTab, modelOk, alertCount, onSettings
         {auth?.required && (
           <button data-testid="logout-button" onClick={auth.logout} title="Esci" className="rounded p-2 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"><LogOut className="h-4 w-4" /></button>
         )}
+        <button data-testid="resources-open-button" onClick={() => setRisorse(true)} title="Risorse in tempo reale" className="rounded p-2 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"><Activity className="h-4 w-4" /></button>
+        <ResourcesDialog open={risorse} onClose={() => setRisorse(false)} />
         <button data-testid="settings-open-button" onClick={onSettings} className="rounded p-2 text-gray-400 transition-colors hover:bg-white/5 hover:text-gray-100"><Settings2 className="h-4 w-4" /></button>
       </div>
     </header>

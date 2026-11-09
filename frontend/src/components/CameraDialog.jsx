@@ -101,7 +101,7 @@ export default function CameraDialog({ camera, onClose, onSave, onDelete }) {
         <div className="space-y-4">
           <Input data-testid="camera-name-input" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="Nome (es. Ingresso principale)" className="h-9 border-white/10 bg-black/30" />
           <SourceFields d={d} setD={setD} />
-          <label className="flex items-start gap-2 rounded-md border border-white/10 p-3" data-testid="camera-prova">
+          <label className="flex items-center gap-2 rounded-md border border-white/10 p-3" data-testid="camera-prova">
             <Switch data-testid="camera-prova-switch" checked={!!d.prova} onCheckedChange={(v) => setD({ ...d, prova: v })} />
             <span className="text-xs text-gray-400"><span className="font-semibold text-gray-200">Telecamera di prova</span>: l'IA analizza e conta, ma non manda mai allarmi, foto su Telegram né clip (per esempio una webcam pubblica del traffico).</span>
           </label>

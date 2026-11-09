@@ -84,6 +84,14 @@ Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esp
 PyInstaller e l'installer con Inno Setup, **prova l'exe e l'installer** (`SentinelAI.exe --prova`) e con un tag `vX.Y.Z`
 pubblica la Release.
 
+## Monitor risorse (1.0.19)
+
+Icona "attività" nella barra in alto: finestra "Risorse in tempo reale", aggiornata ogni 2 s (GET /api/risorse;
+il server prende un campione ogni 2 s e tiene gli ultimi 2 minuti, `backend/risorse.py`). Mostra processore e memoria
+di SentinelAI e del sistema, motore dell'IA, analisi al secondo, durata media e occupazione del motore, e per ogni
+telecamera sorvegliata dal server i fotogrammi ricevuti, elaborati e analizzati. Senza librerie in più: /proc su
+Linux, funzioni di sistema su Windows.
+
 ## Telecamera di prova (1.0.17)
 
 Interruttore "Telecamera di prova" nella finestra della telecamera (etichetta PROVA sulla scheda): l'IA analizza, conta e

@@ -30,6 +30,7 @@ import clips as clips_mod
 import telegram_bot
 from auth_local import require_approved, users_router, ws_member
 from detection import COCO_IT, category_of, detector
+from risorse import misuratore
 from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, mask_text, restore_url_password, rtsp_url_allowed, RTSP_URL_ERROR, stream_url
 from monitor import Manager
 from session import StreamSession
@@ -235,6 +236,12 @@ async def version():
     """1.0.10: versione installata, mostrata in fondo alle Impostazioni (solo dopo il login)."""
     # 1.0.14: anche il motore dell'IA (OpenVINO scheda video / processore, OpenCV)
     return {"version": os.environ.get("SENTINEL_VERSION", "sviluppo"), "ai": detector.engine}
+
+
+@api.get("/risorse")
+async def risorse():
+    """1.0.19: monitor risorse (campione ogni 2 s, ultimi 2 minuti)."""
+    return misuratore.stato()
 
 
 @api.get("/aggiornamento")
@@ -987,6 +994,7 @@ async def startup():
     if not await db.cameras.count_documents({}):
         await db.cameras.insert_one(Camera(**DEMO_CAMERA).model_dump())
     app.state.cleanup_task = asyncio.create_task(cleanup_loop())
+    app.state.risorse_task = asyncio.create_task(misuratore.giro(manager, detector))
     await asyncio.to_thread(detector.load)
     logger.info("YOLO11s caricato (%s, motore %s)", detector.kind, detector.engine)
     # Le telecamere di rete accese restano accese anche dopo un riavvio del programma.
@@ -1000,7 +1008,7 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     await manager.shutdown()
-    for t in (app.state.index_task, app.state.cleanup_task):
+    for t in (app.state.index_task, app.state.cleanup_task, app.state.risorse_task):
         t.cancel()
         with suppress(asyncio.CancelledError):
             await t

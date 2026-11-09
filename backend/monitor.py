@@ -57,6 +57,7 @@ class CameraWorker:
         self.viewers: set[asyncio.Queue] = set()
         self.status = {"state": "connecting", "message": "Connessione alla telecamera…"}
         self.last: Optional[dict] = None
+        self.reader = None
         self.restart = asyncio.Event()
         self.task = asyncio.create_task(self.run(), name=f"camera-{camera.id}")
 
@@ -133,7 +134,7 @@ class CameraWorker:
             codec = "".join(chr((fourcc >> 8 * i) & 0xFF) for i in range(4)).strip("\x00") or "?"
             logger.info("[%s] collegato: %dx%d, %.1f fps dichiarati, codec %s", name, cap.get(cv2.CAP_PROP_FRAME_WIDTH),
                         cap.get(cv2.CAP_PROP_FRAME_HEIGHT), cap.get(cv2.CAP_PROP_FPS) or 0, codec)
-            reader = LatestFrame(cap)
+            reader = self.reader = LatestFrame(cap)   # 1.0.19: il monitor risorse conta i fotogrammi ricevuti
             frames, seq, started = 0, 0, time.monotonic()
             reason = ""
             try:
@@ -175,6 +176,7 @@ class CameraWorker:
                 logger.exception("[%s] errore nell'analisi", name)
             finally:
                 reader.stop()
+                self.reader = None
             if self.restart.is_set():
                 self.restart.clear()
                 logger.info("[%s] indirizzo cambiato: riparto", name)

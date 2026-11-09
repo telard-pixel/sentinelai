@@ -273,6 +273,10 @@ class Detector:
     """YOLO11s. Con models/yolo11s.onnx gira con OpenCV DNN (versione Windows: niente PyTorch);
     altrimenti con Ultralytics come nel progetto originale (versione Docker)."""
 
+    #: 1.0.19 (monitor risorse): analisi fatte e secondi passati dentro il motore, dall'avvio.
+    n_analisi = 0
+    t_analisi = 0.0
+
     def __init__(self):
         self.model = None
         self.kind = None
@@ -421,8 +425,11 @@ class Detector:
         canvas[py:py + nh, px:px + nw] = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR)
         blob = cv2.dnn.blobFromImage(canvas, 1 / 255.0, (IMGSZ, IMG_H), swapRB=True, crop=False)
         with self.lock:
+            t0 = time.perf_counter()
             self.model.setInput(blob)
             pred = self.model.forward()
+            self.n_analisi += 1
+            self.t_analisi += time.perf_counter() - t0
         pred = np.squeeze(pred, 0).T                    # (N, 84): cx, cy, w, h, 80 punteggi
         scores = pred[:, 4:]
         cls = scores.argmax(1)
