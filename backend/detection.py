@@ -354,9 +354,21 @@ class Detector:
                     cfg = {"PERFORMANCE_HINT": "LATENCY"}
                     if dev == "GPU":
                         cfg["INFERENCE_PRECISION_HINT"] = "f32"
+                        # 1.0.18: senza questo il driver Intel aspetta la scheda girando a vuoto e tiene un core al
+                        # 100% per tutta l'analisi (CT 111: 132 ms di processore per analisi; con LOW 6 ms, stessa
+                        # velocità). LOW = attesa "a basso consumo" (cl_khr_throttle_hints).
+                        cfg["GPU_QUEUE_THROTTLE"] = "LOW"
                     else:
                         cfg["INFERENCE_NUM_THREADS"] = _ai_threads()
-                    request = core.compile_model(model, dev, cfg).create_infer_request()
+                    try:
+                        compiled = core.compile_model(model, dev, cfg)
+                    except Exception:  # noqa: BLE001 - driver senza "throttle hints": si riprova senza
+                        if "GPU_QUEUE_THROTTLE" not in cfg:
+                            raise
+                        cfg.pop("GPU_QUEUE_THROTTLE")
+                        logger.info("IA: la scheda non accetta GPU_QUEUE_THROTTLE, la uso senza")
+                        compiled = core.compile_model(model, dev, cfg)
+                    request = compiled.create_infer_request()
                     request.infer({0: np.zeros((1, 3, h, IMGSZ), dtype=np.float32)})
                     shape = tuple(request.get_output_tensor(0).data.shape)
                     if shape != (1, 84, _uscite_attese(h, IMGSZ)):
