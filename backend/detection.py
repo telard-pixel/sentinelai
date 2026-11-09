@@ -356,17 +356,18 @@ class Detector:
                         cfg["INFERENCE_PRECISION_HINT"] = "f32"
                         # 1.0.18: senza questo il driver Intel aspetta la scheda girando a vuoto e tiene un core al
                         # 100% per tutta l'analisi (CT 111: 132 ms di processore per analisi; con LOW 6 ms, stessa
-                        # velocità). LOW = attesa "a basso consumo" (cl_khr_throttle_hints).
+                        # velocità). LOW = attesa "a basso consumo" (cl_khr_throttle_hints); senza l'estensione OpenVINO
+                        # 2024.6 ignora la chiave da solo, il ripiego sotto è solo prudenza per versioni future.
                         cfg["GPU_QUEUE_THROTTLE"] = "LOW"
                     else:
                         cfg["INFERENCE_NUM_THREADS"] = _ai_threads()
                     try:
                         compiled = core.compile_model(model, dev, cfg)
-                    except Exception:  # noqa: BLE001 - driver senza "throttle hints": si riprova senza
+                    except Exception as exc:  # noqa: BLE001 - si riprova senza la chiave, poi vale l'except sotto
                         if "GPU_QUEUE_THROTTLE" not in cfg:
                             raise
                         cfg.pop("GPU_QUEUE_THROTTLE")
-                        logger.info("IA: la scheda non accetta GPU_QUEUE_THROTTLE, la uso senza")
+                        logger.info("IA: compile GPU con GPU_QUEUE_THROTTLE fallito (%s): riprovo senza", exc)
                         compiled = core.compile_model(model, dev, cfg)
                     request = compiled.create_infer_request()
                     request.infer({0: np.zeros((1, 3, h, IMGSZ), dtype=np.float32)})
