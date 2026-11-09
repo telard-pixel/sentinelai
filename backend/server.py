@@ -100,7 +100,7 @@ def _hostname(value: str) -> str:
         return ""
 
 
-#: Origini in più ammesse per i comandi (es. https://sentinel.taile84bd0.ts.net dietro Tailscale serve).
+#: Origini in più ammesse per i comandi (es. https://sentinel.tuarete.ts.net dietro Tailscale serve).
 ALLOWED_ORIGINS = {o.strip().lower().rstrip("/") for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()}
 DEFAULT_PORTS = {"http": "80", "https": "443", "ws": "80", "wss": "443"}
 

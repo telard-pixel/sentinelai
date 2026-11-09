@@ -5,7 +5,7 @@ export function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-// 07/11/2026: crypto.randomUUID esiste solo su HTTPS o localhost. Dal CT (http://192.168.0.x) mancava e
+// 07/11/2026: crypto.randomUUID esiste solo su HTTPS o localhost. Dal CT (http://192.168.1.x) mancava e
 // "Completa zona" / "Nuova regola" andavano in errore senza dire niente. getRandomValues invece c'è sempre.
 export function newId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();

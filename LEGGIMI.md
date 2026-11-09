@@ -139,7 +139,7 @@ non apre MAI l'app senza password: la blocca e lo scrive nel registro.
 ## Versione Linux (CT Proxmox) — `linux/`
 
 Stesso motore della versione Windows (YOLO11s ONNX + OpenCV + SQLite), senza finestra: si apre dal browser su
-`http://<indirizzo>:8765`. Installata il 06/11/2026 nel CT 111 "sentinelai" (Debian 12, 192.168.0.145).
+`http://<indirizzo>:8765`. Installata il 06/11/2026 nel CT 111 "sentinelai" (Debian 12).
 
 - Programma in `/opt/sentinelai` (backend, desktop/sentinel_desktop.py, frontend/build, models/yolo11s.onnx, venv),
   dati in `/var/lib/SentinelAI`, video in `/var/lib/SentinelAI/video` (o la cartella scelta dall'app).

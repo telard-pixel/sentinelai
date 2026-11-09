@@ -54,7 +54,7 @@ function RuleRow({ rule, i, onChange, onDelete }) {
 export default function AlertRules({ settings, onSave }) {
   const [draft, setDraft] = useState(settings);
   const [perm, setPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
-  // 1.0.9: su http (es. http://192.168.0.145:8765) il browser non permette le notifiche: prima il tasto
+  // 1.0.9: su http (es. http://192.168.1.50:8765) il browser non permette le notifiche: prima il tasto
   // "Abilita" non faceva niente senza dire perché.
   const secure = typeof window !== "undefined" && window.isSecureContext;
   useEffect(() => setDraft(settings), [settings]);
