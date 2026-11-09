@@ -31,6 +31,7 @@ import telegram_bot
 from auth_local import require_approved, users_router, ws_member
 from detection import COCO_IT, category_of, detector
 from risorse import misuratore
+from temperatura import termico
 from models import HEAT_H, HEAT_W, Camera, CameraIn, Event, Settings, camera_public, mask_text, restore_url_password, rtsp_url_allowed, RTSP_URL_ERROR, stream_url
 from monitor import Manager
 from session import StreamSession
@@ -236,6 +237,29 @@ async def version():
     """1.0.10: versione installata, mostrata in fondo alle Impostazioni (solo dopo il login)."""
     # 1.0.14: anche il motore dell'IA (OpenVINO scheda video / processore, OpenCV)
     return {"version": os.environ.get("SENTINEL_VERSION", "sviluppo"), "ai": detector.engine}
+
+
+class TemperaturaIn(BaseModel):
+    auto: bool = True
+    limite: int = Field(72, ge=55, le=90)
+
+
+async def load_temperatura():
+    doc = await db.settings.find_one({"_id": "temperatura"}, {"_id": 0}) or {}
+    try:
+        t = TemperaturaIn(**{k: v for k, v in doc.items() if k in ("auto", "limite")})
+    except Exception:  # noqa: BLE001 - documento rovinato: valori predefiniti
+        t = TemperaturaIn()
+    termico.imposta(auto=t.auto, limite=t.limite)
+    return t
+
+
+@api.put("/temperatura")
+async def put_temperatura(body: TemperaturaIn):
+    """1.0.21: regolazione automatica per la temperatura (solo telecamere di prova)."""
+    await db.settings.replace_one({"_id": "temperatura"}, {"_id": "temperatura", **body.model_dump()}, upsert=True)
+    termico.imposta(auto=body.auto, limite=body.limite)
+    return termico.stato()
 
 
 @api.get("/risorse")
@@ -1027,6 +1051,10 @@ async def startup():
     if not await db.cameras.count_documents({}):
         await db.cameras.insert_one(Camera(**DEMO_CAMERA).model_dump())
     app.state.cleanup_task = asyncio.create_task(cleanup_loop())
+    try:
+        await load_temperatura()
+    except Exception:  # noqa: BLE001 - il server parte comunque, con i valori predefiniti
+        logging.getLogger("temperatura").exception("impostazioni temperatura non lette")
     app.state.risorse_task = asyncio.create_task(misuratore.giro(manager, detector))
     await asyncio.to_thread(detector.load)
     logger.info("YOLO11s caricato (%s, motore %s)", detector.kind, detector.engine)

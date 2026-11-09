@@ -33,6 +33,7 @@ def safe_url(url: str) -> str:
 
 
 from session import local_tz_offset  # noqa: E402,F401  (spostata in session.py)
+from temperatura import FATTORE, termico  # noqa: E402
 
 
 async def open_cancellable(url):
@@ -119,6 +120,12 @@ class CameraWorker:
                 self.set_status("error", "Indirizzo non ammesso: deve iniziare con rtsp:// (modifica la telecamera).")
                 await self._wait(30)
                 continue
+            if termico.per_prova(self.camera.prova) >= 2:      # 1.0.21: processore caldo, telecamera di prova in pausa
+                t = termico.temperatura
+                self.set_status("connecting", f"In pausa: processore caldo ({t:.0f} °C). Riparte da sola quando si raffredda."
+                                if t is not None else "In pausa per la temperatura del processore.")
+                await self._wait(10)
+                continue
             self.set_status("connecting", f"Connessione a {name}…" if not attempt else f"Ricollegamento a {name} (tentativo {attempt + 1})…")
             logger.info("[%s] apro %s", name, safe_url(url))
             cap = await open_cancellable(url)
@@ -154,6 +161,9 @@ class CameraWorker:
                         reason = ("nessun fotogramma nei primi %d s" % FIRST_FRAME_TIMEOUT if not frames
                                   else "nessun fotogramma da %d s" % FRAME_TIMEOUT) if reader.ok else "la telecamera ha chiuso il flusso"
                         break
+                    if termico.per_prova(self.camera.prova) >= 2:
+                        reason = "pausa per temperatura"
+                        break
                     if not frames:
                         logger.info("[%s] primo fotogramma dopo %.1f s (%dx%d)", name, time.monotonic() - started, frame.shape[1], frame.shape[0])
                         self.set_status("live")
@@ -165,7 +175,10 @@ class CameraWorker:
                         img = await asyncio.to_thread(encode_jpeg, frame, 960, 70)
                         h, w = frame.shape[:2]
                         self.broadcast({"type": "frame", "image": base64.b64encode(img).decode(), "width": w, "height": h, **result})
-                    rest = (IDLE_LOOP_SECONDS if result.get("idle") else MIN_LOOP_SECONDS) - (time.monotonic() - t0)
+                    giro = IDLE_LOOP_SECONDS if result.get("idle") else MIN_LOOP_SECONDS
+                    if termico.per_prova(self.camera.prova) == 1:   # 1.0.21: processore caldo, prova rallentata
+                        giro *= FATTORE
+                    rest = giro - (time.monotonic() - t0)
                     if rest > 0:
                         await asyncio.sleep(rest)
             except asyncio.CancelledError:
@@ -180,6 +193,10 @@ class CameraWorker:
             if self.restart.is_set():
                 self.restart.clear()
                 logger.info("[%s] indirizzo cambiato: riparto", name)
+                attempt = 0
+                continue
+            if reason == "pausa per temperatura":
+                logger.info("[%s] in pausa per la temperatura del processore", name)
                 attempt = 0
                 continue
             delay = BACKOFF[min(attempt, len(BACKOFF) - 1)]

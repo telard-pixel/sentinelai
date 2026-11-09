@@ -84,6 +84,16 @@ Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esp
 PyInstaller e l'installer con Inno Setup, **prova l'exe e l'installer** (`SentinelAI.exe --prova`) e con un tag `vX.Y.Z`
 pubblica la Release.
 
+## Temperatura e regolazione automatica (1.0.21)
+
+- Solo sul server Linux (CT/Docker): SentinelAI legge la temperatura del processore da `/sys/class/hwmon` (coretemp/k10temp; nel CT si vede quella del Proxmox, in sola lettura). Si vede nel Monitor risorse, con grafico.
+- Regolazione automatica (accesa di serie, limite 72 °C, si cambia nel Monitor risorse; `PUT /api/temperatura {auto, limite}`), SOLO sulle telecamere di prova:
+  - 30 s sopra il limite: le telecamere di prova vengono analizzate un terzo delle volte;
+  - altri 30 s sopra: le telecamere di prova vanno in pausa (flusso chiuso, niente decodifica);
+  - 2 minuti sotto (limite − 5 °C): si torna indietro di uno scalino alla volta.
+- Le telecamere vere (Garage, Sala…) non vengono MAI rallentate. Ogni cambio di scalino finisce nel registro.
+- Sull'app Windows la temperatura non si legge: il riquadro dice "non disponibile" e la regolazione non fa niente.
+
 ## Ordine delle telecamere ed eventi in colonna (1.0.20)
 
 - Le telecamere si spostano trascinandole per la maniglia ⋮⋮ a sinistra del nome, sia col mouse sia col dito. Da tastiera: Tab sulla maniglia e frecce. L'ordine si salva sul server (`PUT /api/camera-order`) e vale per tutti i dispositivi. Le telecamere nuove vanno in fondo. Spostarle non riavvia i flussi.

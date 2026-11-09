@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { http } from "@/lib/api";
+import { http, errorText } from "@/lib/api";
+import { Switch } from "@/components/ui/switch";
+import { toast } from "sonner";
 
 // 1.0.19: monitor risorse in tempo reale (richiesta di Roberto). Il server prende un campione ogni 2 s
 // (GET /api/risorse); qui si chiede solo mentre la finestra è aperta. Colori e larghezze in stile diretto:
 // il CSS di Tailwind è precompilato (index.css) e le classi nuove non esisterebbero.
 
-const VERDE = "#10B981", CIANO = "#06B6D4", AMBRA = "#F59E0B", ROSSO = "#EF4444";
+const VERDE = "#10B981", CIANO = "#06B6D4", AMBRA = "#F59E0B", ROSSO = "#EF4444", ROSA = "#F472B6";
+const LIVELLI = ["normale", "telecamere di prova rallentate", "telecamere di prova in pausa"];
 const colore = (p) => (p == null ? "#6B7280" : p >= 85 ? ROSSO : p >= 60 ? AMBRA : VERDE);
 const num = (v, suf = "") => (v == null ? "—" : `${v}${suf}`);
 
@@ -44,6 +47,9 @@ function Grafico({ storia, core }) {
         {[25, 50, 75].map((y) => <line key={y} x1="0" x2={W} y1={H - (y / 100) * H} y2={H - (y / 100) * H} stroke="rgba(255,255,255,0.07)" strokeWidth="1" />)}
         <polyline fill="none" stroke={CIANO} strokeWidth="2" vectorEffect="non-scaling-stroke" points={linea((s) => s.ia_occupata)} />
         <polyline fill="none" stroke={VERDE} strokeWidth="2" vectorEffect="non-scaling-stroke" points={linea((s) => (s.cpu_programma == null ? null : s.cpu_programma / (core || 1)))} />
+        {storia.some((s) => s.temperatura != null) && (
+          <polyline fill="none" stroke={ROSA} strokeWidth="1.5" vectorEffect="non-scaling-stroke" points={linea((s) => s.temperatura)} />
+        )}
         {storia.some((s) => s.cpu_sistema != null) && (
           <polyline fill="none" stroke={AMBRA} strokeWidth="1.5" strokeDasharray="4 3" vectorEffect="non-scaling-stroke" points={linea((s) => s.cpu_sistema)} />
         )}
@@ -52,8 +58,54 @@ function Grafico({ storia, core }) {
         <span><span style={{ color: VERDE }}>■</span> SentinelAI (% di tutto il processore)</span>
         <span><span style={{ color: AMBRA }}>■</span> tutto il sistema</span>
         <span><span style={{ color: CIANO }}>■</span> IA occupata</span>
+        {storia.some((s) => s.temperatura != null) && <span><span style={{ color: ROSA }}>■</span> temperatura (°C)</span>}
         <span className="ml-auto">ultimi 2 minuti</span>
       </div>
+    </div>
+  );
+}
+
+// 1.0.21: temperatura del processore e regolazione automatica (solo server Linux: sull'app Windows non si legge).
+function Temperatura({ t, onSaved }) {
+  const [limite, setLimite] = useState(t.limite);
+  const [salvo, setSalvo] = useState(false);
+  useEffect(() => setLimite(t.limite), [t.limite]);
+  const salva = (body) => {
+    setSalvo(true);
+    http.put("/temperatura", { auto: t.auto, limite: t.limite, ...body })
+      .then((r) => onSaved(r.data))
+      .catch((e) => toast.error("Non salvato", { description: errorText(e) }))
+      .finally(() => setSalvo(false));
+  };
+  const col = t.temperatura == null ? "#6B7280" : t.temperatura >= t.limite ? ROSSO : t.temperatura >= t.ripresa ? AMBRA : VERDE;
+  return (
+    <div className="rounded-md border border-white/10 p-3" data-testid="res-temperatura">
+      <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
+        <p className="font-mono text-[10px] uppercase tracking-wider text-gray-500">Temperatura processore</p>
+        <p className="font-heading text-xl font-semibold tabular-nums" style={{ color: col }}>{t.temperatura == null ? "—" : `${Math.round(t.temperatura)} °C`}</p>
+        <p className="font-mono text-[11px] text-gray-400" data-testid="res-temp-livello">
+          {t.temperatura == null ? "non disponibile qui (solo sul server Linux)" : !t.auto ? "regolazione spenta" : LIVELLI[t.livello] || ""}
+        </p>
+      </div>
+      <Barra valore={t.temperatura == null ? null : ((t.temperatura - 30) / 60) * 100} />
+      <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-gray-300">
+        <label className="flex items-center gap-2">
+          <Switch data-testid="res-temp-auto" checked={!!t.auto} disabled={salvo} onCheckedChange={(v) => salva({ auto: v })} />
+          Regola da solo
+        </label>
+        <label className="flex items-center gap-2">
+          limite
+          <input data-testid="res-temp-limite" type="number" min={55} max={90} value={limite} disabled={salvo}
+            onChange={(e) => setLimite(e.target.value)}
+            onBlur={() => { const v = Math.round(Number(limite)); if (v >= 55 && v <= 90 && v !== t.limite) salva({ limite: v }); else setLimite(t.limite); }}
+            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            className="rounded border border-white/10 bg-transparent px-2 py-1 font-mono text-xs text-gray-100" style={{ width: 64 }} aria-label="Limite di temperatura in gradi" />
+          °C
+        </label>
+      </div>
+      <p className="mt-2 font-mono text-[10px] text-gray-500">
+        Sopra il limite per 30 s: prima le telecamere di prova vengono analizzate meno spesso, poi vanno in pausa. Tornano normali sotto {t.ripresa} °C per 2 minuti. Le telecamere vere (non di prova) non vengono mai rallentate.
+      </p>
     </div>
   );
 }
@@ -98,6 +150,7 @@ export default function ResourcesDialog({ open, onClose }) {
               <Riquadro testid="res-ia-ms" titolo="Durata analisi" valore={num(u.ia_ms, " ms")} sotto="media degli ultimi 2 s" />
               <Riquadro testid="res-ia-occ" titolo="IA occupata" valore={num(u.ia_occupata, "%")} sotto="tempo passato nel motore" barra={u.ia_occupata} />
             </div>
+            {u.termico && <Temperatura t={u.termico} onSaved={(t) => setDati((d) => ({ ...d, ultimo: { ...d.ultimo, termico: t, temperatura: t.temperatura } }))} />}
             <Grafico storia={dati.storia || []} core={core} />
             <div className="space-y-1.5">
               <p className="font-mono text-[11px] uppercase tracking-wider text-gray-400">Telecamere sorvegliate dal server ({tel.length})</p>

@@ -12,6 +12,8 @@ import sys
 import time
 from collections import deque
 
+from temperatura import leggi_processore, termico
+
 logger = logging.getLogger("risorse")
 
 PASSO = 2.0
@@ -147,6 +149,10 @@ class Misuratore:
             out["ia_al_secondo"] = _r(dn / dt)
             out["ia_ms"] = _r(dtai / dn * 1000, 0) if dn else None
             out["ia_occupata"] = _r(min(dtai / dt * 100, 100), 0)
+        # 1.0.21: temperatura del processore e regolazione automatica (solo server Linux; altrove None)
+        termico.aggiorna(leggi_processore())
+        out["termico"] = termico.stato()
+        out["temperatura"] = out["termico"]["temperatura"]
         mp, mu, mt = _memoria()
         out.update(mem_programma=_r(mp, 0), mem_sistema=_r(mu, 0), mem_totale=_r(mt, 0))
         tel = []
@@ -171,7 +177,7 @@ class Misuratore:
         self.ultimo = out
         if p:
             self.storia.append({k: out.get(k) for k in ("ora", "cpu_programma", "cpu_sistema", "mem_programma",
-                                                        "ia_al_secondo", "ia_occupata")})
+                                                        "ia_al_secondo", "ia_occupata", "temperatura")})
         return out
 
     def stato(self) -> dict:
