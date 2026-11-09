@@ -5,7 +5,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, co
 openvino_libs = collect_dynamic_libs("openvino")
 
 hidden = (collect_submodules("uvicorn") + collect_submodules("websockets")
-          + ["server", "session", "clips", "detection", "models", "telegram_bot", "auth_local", "docstore", "aggiornamento",
+          + ["server", "session", "clips", "detection", "models", "telegram_bot", "auth_local", "docstore", "aggiornamento", "risorse",
              "pystray._win32", "openpyxl", "imageio_ffmpeg", "tzdata", "zoneinfo",
              "webview.platforms.winforms", "webview.platforms.edgechromium", "clr",
              "openvino", "openvino.runtime", "onnxruntime", "winreg"])

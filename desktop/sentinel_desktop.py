@@ -645,6 +645,15 @@ def prova(out_file: str) -> int:
         people = sum(1 for d in dets for c, _, _ in d if c == 0)
         check(people >= 3, f"persone riconosciute nel demo: {people} in {len(dets)} fotogrammi ({ms:.0f} ms a fotogramma)")
 
+        # 1.0.19: monitor risorse su Windows (memoria via ctypes: l'agente di prova temeva un errore a 64 bit)
+        try:
+            import risorse
+            mp, mu, mt = risorse._memoria()
+            check(mp and mu and mt and mp < mt, f"monitor risorse, memoria: programma {mp} MB, sistema {mu}/{mt} MB")
+            check(risorse._cpu_sistema() is not None, f"monitor risorse, processore di sistema: {risorse._cpu_sistema()}")
+        except Exception as exc:  # noqa: BLE001
+            check(False, f"monitor risorse: {exc}")
+
         # 1.0.16: DirectML incluso nell'exe. Sul runner (Hyper-V) non c'è una scheda DirectX 12: onnxruntime ripiega
         # sul processore e il programma deve scartarlo (visto sopra: motore scelto). Con una scheda vera (PC di casa)
         # si confronta anche con OpenCV.

@@ -460,7 +460,10 @@ class Detector:
             return self._detect_onnx(frame, conf, iou, classes)
         h, w = frame.shape[:2]
         with self.lock:
+            t0 = time.perf_counter()
             res = self.model.predict(frame, conf=conf, iou=iou, classes=classes or None, imgsz=640, verbose=False)[0]
+            self.n_analisi += 1
+            self.t_analisi += time.perf_counter() - t0
         out = []
         for b in res.boxes:
             x1, y1, x2, y2 = b.xyxy[0].tolist()

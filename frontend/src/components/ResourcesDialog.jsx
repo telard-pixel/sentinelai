@@ -115,7 +115,7 @@ export default function ResourcesDialog({ open, onClose }) {
                       </span>
                       <span>{num(c.ricevuti, " fps")}</span>
                       <span>{num(c.elaborati, " fps")}</span>
-                      <span>{num(c.analizzati, "/s")}{c.spettatori > 0 && <span className="text-gray-500"> · 👁 {c.spettatori}</span>}</span>
+                      <span>{num(c.analizzati, "/s")}{c.spettatori > 0 && <span className="text-gray-500" aria-label={`${c.spettatori} spettatori`} title="finestre che la stanno guardando"> · 👁 {c.spettatori}</span>}</span>
                     </div>
                   ))}
                 </div>

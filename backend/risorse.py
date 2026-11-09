@@ -42,6 +42,53 @@ def _cpu_sistema():
     return None
 
 
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    class _PMC(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    class _MSX(ctypes.Structure):
+        _fields_ = [("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+
+def _memoria_windows():
+    """Agente di prova (1.0.19): argtypes/restype espliciti, altrimenti lo pseudo-handle a 64 bit non passa;
+    processo e sistema in due prove separate (un errore sul primo non cancella il secondo)."""
+    proc = usati = totale = None
+    k32 = ctypes.windll.kernel32
+    try:
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.GetCurrentProcess.argtypes = []
+        gpmi = ctypes.windll.psapi.GetProcessMemoryInfo
+        gpmi.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PMC), wintypes.DWORD]
+        gpmi.restype = wintypes.BOOL
+        pmc = _PMC(); pmc.cb = ctypes.sizeof(_PMC)
+        if gpmi(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
+            proc = pmc.WorkingSetSize / 1048576
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        k32.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(_MSX)]
+        k32.GlobalMemoryStatusEx.restype = wintypes.BOOL
+        m = _MSX(); m.dwLength = ctypes.sizeof(_MSX)
+        if k32.GlobalMemoryStatusEx(ctypes.byref(m)):
+            totale = m.ullTotalPhys / 1048576
+            usati = (m.ullTotalPhys - m.ullAvailPhys) / 1048576
+    except Exception:  # noqa: BLE001
+        pass
+    return proc, usati, totale
+
+
 def _memoria():
     """(MB usati dal programma, MB usati dal sistema, MB totali); i valori che non si sanno sono None."""
     proc = usati = totale = None
@@ -60,31 +107,7 @@ def _memoria():
                 totale = info["MemTotal"] / 1024
                 usati = (info["MemTotal"] - info["MemAvailable"]) / 1024
         elif os.name == "nt":
-            import ctypes
-            from ctypes import wintypes
-
-            class PMC(ctypes.Structure):
-                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
-                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
-                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                            ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
-
-            class MSX(ctypes.Structure):
-                _fields_ = [("dwLength", wintypes.DWORD), ("dwMemoryLoad", wintypes.DWORD),
-                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
-                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
-                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
-                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
-            pmc = PMC(); pmc.cb = ctypes.sizeof(PMC)
-            k32 = ctypes.windll.kernel32
-            k32.GetCurrentProcess.restype = wintypes.HANDLE
-            if ctypes.windll.psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
-                proc = pmc.WorkingSetSize / 1048576
-            m = MSX(); m.dwLength = ctypes.sizeof(MSX)
-            if k32.GlobalMemoryStatusEx(ctypes.byref(m)):
-                totale = m.ullTotalPhys / 1048576
-                usati = (m.ullTotalPhys - m.ullAvailPhys) / 1048576
+            proc, usati, totale = _memoria_windows()
     except Exception:  # noqa: BLE001
         pass
     return proc, usati, totale
@@ -131,10 +154,10 @@ class Misuratore:
             reader = getattr(w, "reader", None)
             ricevuti = None
             if reader is not None:
-                prima = self._seq.get(cid)
-                if prima and prima[0] <= reader.seq and ora > prima[1]:
-                    ricevuti = _r((reader.seq - prima[0]) / (ora - prima[1]))
-                self._seq[cid] = (reader.seq, ora)
+                prima = self._seq.get(cid)    # (lettore, seq, istante): lettore nuovo = si riparte da capo
+                if prima and prima[0] == id(reader) and prima[1] <= reader.seq and ora > prima[2]:
+                    ricevuti = _r((reader.seq - prima[1]) / (ora - prima[2]))
+                self._seq[cid] = (id(reader), reader.seq, ora)
             else:
                 self._seq.pop(cid, None)
             last = w.last or {}
@@ -155,11 +178,15 @@ class Misuratore:
         return {"passo": PASSO, "ultimo": self.ultimo, "storia": list(self.storia)}
 
     async def giro(self, manager, detector):
+        ultimo_errore = None
         while True:
             try:
                 self.campione(manager, detector)
-            except Exception:  # noqa: BLE001 - il monitor non deve mai fermare il server
-                logger.exception("campione risorse non riuscito")
+                ultimo_errore = None
+            except Exception as exc:  # noqa: BLE001 - il monitor non deve mai fermare il server
+                if repr(exc) != ultimo_errore:     # scritto una volta, non ogni 2 s
+                    logger.exception("campione risorse non riuscito")
+                ultimo_errore = repr(exc)
             await asyncio.sleep(PASSO)
 
 
