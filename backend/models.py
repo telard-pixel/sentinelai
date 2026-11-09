@@ -70,6 +70,10 @@ class CameraIn(BaseModel):
     prova: bool = False
     line: Line = Line()
     zones: List[Zone] = []
+    #: 1.0.20: numero di revisione. Ogni modifica lo aumenta; un PUT che porta una revisione vecchia (pagina aperta
+    #: da prima di una modifica fatta altrove) viene rifiutato con 409 invece di riscrivere tutto con dati vecchi.
+    #: None = client vecchio che non lo conosce: nessun controllo (come prima).
+    rev: Optional[int] = Field(None, ge=0)
 
     @model_validator(mode="after")
     def check_nvr(self):
@@ -204,6 +208,7 @@ def camera_public(c: Camera) -> dict:
     d["has_nvr_password"] = bool(d.pop("nvr_password"))
     d["nvr_password"] = ""
     d["disabled"] = c.type == "nvr" and not c.nvr_host.strip()
+    d["rev"] = c.rev or 0       # 1.0.20: il browser la rimanda sempre; telecamere salvate prima = revisione 0
     if c.type == "nvr":
         d["url"] = stream_url(c, hide_password=True)
     else:

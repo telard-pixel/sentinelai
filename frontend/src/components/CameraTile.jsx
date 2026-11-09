@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Play, Square, Maximize2, Minimize2, Settings2, Camera, Radio, Film, Clapperboard, Server, GripVertical } from "lucide-react";
 import { useStream } from "@/hooks/useStream";
-import { http } from "@/lib/api";
 import LiveFeed from "@/components/LiveFeed";
 
 export const SOURCE_META = {
@@ -21,7 +20,7 @@ function Stat({ label, value, color, testid }) {
   );
 }
 
-export default function CameraTile({ camera, onEvents, onResult, onCameraChange, onEdit, expanded, onToggleExpand, compact, dragHandle, dragging }) {
+export default function CameraTile({ camera, onEvents, onResult, onCameraChange, onMonitor, onEdit, expanded, onToggleExpand, compact, dragHandle, dragging }) {
   const stream = useStream(onEvents);
   const fileRef = useRef(null);
   const Icon = SOURCE_META[camera.type].icon;
@@ -42,15 +41,15 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
   // server (poi la finestra si collega da sola); Ferma = spegnilo davvero.
   const onStart = () => {
     if (camera.type === "file") return fileRef.current?.click();
-    if (isNet) return onCameraChange({ ...camera, monitor: true }).catch(() => {});
+    // 1.0.20: solo l'interruttore, non tutta la telecamera (una pagina vecchia riscriveva nome e indirizzo)
+    if (isNet) return onMonitor(true).catch(() => {});
     return start();
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (isNet && camera.monitor && !camera.disabled) start(); }, [camera.id, camera.monitor, camera.type, camera.url]);
   const onStop = async () => {
     if (isNet) {
-      try { await http.post(`/cameras/${camera.id}/monitor`, { on: false }); } catch {}
-      onCameraChange({ ...camera, monitor: false }).catch(() => {});
+      await onMonitor(false).catch(() => {});
     }
     stream.stop();
   };
@@ -60,7 +59,7 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
       <div className="flex items-center gap-2 border-b border-white/10 bg-raised px-3 py-2">
         {/* 1.0.20: maniglia per spostare la telecamera trascinandola (mouse e dito) */}
         {dragHandle && (
-          <button type="button" {...dragHandle} data-testid={`camera-drag-${camera.id}`} title="Trascina per spostare" aria-label={`Sposta ${camera.name}`}
+          <button type="button" {...dragHandle} data-testid={`camera-drag-${camera.id}`} title="Trascina per spostare (o Tab e frecce)" aria-label={`Sposta ${camera.name}`}
             style={{ marginLeft: -4 }} className="camera-drag-handle rounded p-0.5 text-gray-500 hover:bg-white/5 hover:text-gray-200"><GripVertical className="h-4 w-4" /></button>
         )}
         <Icon className="h-3.5 w-3.5 text-emerald-400" />

@@ -58,54 +58,81 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
     },
     onError: (e) => { setOrder(null); qc.invalidateQueries({ queryKey: ["cameras"] }); toast.error("Ordine non salvato", { description: errorText(e) }); },
   });
-  const finishDrag = () => {
-    const d = drag.current;
-    drag.current = null;
-    setDragId(null);
-    if (!d) return;
-    if (d.order.join() !== d.start.join()) saveOrder.mutate(d.order);
-    else setOrder(null);
-  };
-  const handleFor = (id) => ({
-    onPointerDown: (e) => {
-      if (e.button > 0 || saveOrder.isPending) return;
-      e.preventDefault();
-      e.currentTarget.setPointerCapture?.(e.pointerId);
-      const ids = shown.map((c) => c.id);
-      drag.current = { id, start: ids, order: ids };
-      setOrder(ids);
-      setDragId(id);
-    },
-    onPointerMove: (e) => {
-      const d = drag.current;
-      if (!d || d.id !== id) return;
-      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-camera-id]")?.dataset.cameraId;
-      if (!over || over === id) return;
-      const from = d.order.indexOf(id), to = d.order.indexOf(over);
-      if (from < 0 || to < 0) return;
+  // Trascinamento (agente di prova 1.0.20): ascoltatori su window e niente cattura del puntatore sulla maniglia,
+  // perché quando React sposta la scheda trascinata il browser toglieva la cattura e il trascinamento finiva dopo
+  // un posto. Dopo uno scambio non si riscambia con la stessa scheda finché il puntatore non la lascia (con una
+  // scheda espansa l'ordine oscillava).
+  const endDrag = useRef(null);
+  useEffect(() => () => endDrag.current?.(false), []);
+  const startDrag = (id, e) => {
+    if (e.button > 0 || drag.current) return;
+    e.preventDefault();
+    const ids = shown.map((c) => c.id);
+    const d = { id, start: ids, order: ids, last: null };
+    drag.current = d;
+    setOrder(ids);
+    setDragId(id);
+    const move = (ev) => {
+      const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest("[data-camera-id]")?.dataset.cameraId;
+      if (over !== d.last) d.last = null;      // lasciata la scheda appena scambiata: si può di nuovo
+      if (!over || over === id || over === d.last) return;
+      const to = d.order.indexOf(over);
+      if (to < 0) return;
       const next = d.order.filter((x) => x !== id);
       next.splice(to, 0, id);
       d.order = next;
+      d.last = over;
       setOrder(next);
-    },
-    onPointerUp: finishDrag,
-    onPointerCancel: finishDrag,
-    onLostPointerCapture: () => { if (drag.current?.id === id) finishDrag(); },
-    // da tastiera: frecce per spostare di un posto
+    };
+    const stop = (save) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      endDrag.current = null;
+      drag.current = null;
+      setDragId(null);
+      if (save && d.order.join() !== d.start.join()) saveOrder.mutate(d.order);
+      else setOrder(null);
+    };
+    const up = () => stop(true);
+    const cancel = () => stop(false);
+    endDrag.current = stop;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+  };
+  // Da tastiera: frecce per spostare di un posto; si salva poco dopo l'ultima freccia (più frecce di fila contano tutte).
+  const keyTimer = useRef(null);
+  useEffect(() => () => clearTimeout(keyTimer.current), []);
+  const handleFor = (id) => ({
+    onPointerDown: (e) => startDrag(id, e),
     onKeyDown: (e) => {
       const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
-      if (!step || saveOrder.isPending) return;
+      if (!step || drag.current) return;
       e.preventDefault();
       const ids = shown.map((c) => c.id);
       const i = ids.indexOf(id), j = i + step;
       if (j < 0 || j >= ids.length) return;
       [ids[i], ids[j]] = [ids[j], ids[i]];
       setOrder(ids);
-      saveOrder.mutate(ids);
+      clearTimeout(keyTimer.current);
+      keyTimer.current = setTimeout(() => saveOrder.mutate(ids), 600);
     },
   });
 
-  const onErr = (e) => toast.error("Salvataggio non riuscito", { description: errorText(e) });
+  // 1.0.20: 409 = la telecamera è stata cambiata da un'altra finestra; si ricaricano i dati veri
+  const onErr = (e) => {
+    if (e?.response?.status === 409) {
+      qc.invalidateQueries({ queryKey: ["cameras"] });
+      toast.warning("Telecamera cambiata da un'altra finestra", { description: "Ho ricaricato i dati: riprova la modifica." });
+      return;
+    }
+    toast.error("Salvataggio non riuscito", { description: errorText(e) });
+  };
+  const setMonitor = (c, on) => http.post(`/cameras/${c.id}/monitor`, { on }).then((r) => {
+    qc.setQueryData(["cameras"], (list = []) => list.map((x) => (x.id === c.id ? { ...x, monitor: r.data.monitor, rev: r.data.rev } : x)));
+    return r.data;
+  }).catch((e) => { onErr(e); throw e; });
   const update = useMutation({
     mutationFn: (c) => http.put(`/cameras/${c.id}`, toBody(c)).then((r) => r.data),
     onSuccess: (c) => qc.setQueryData(["cameras"], (list = []) => list.map((x) => (x.id === c.id ? c : x))),
@@ -155,7 +182,7 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
           {shown.map((c) => (
             <CameraTile key={c.id} camera={c} onEvents={onEvents} onResult={onResult} compact={cols > 1}
               dragHandle={shown.length > 1 ? handleFor(c.id) : undefined} dragging={dragId === c.id}
-              onCameraChange={(nc) => update.mutateAsync(nc)} onEdit={setEditing}
+              onCameraChange={(nc) => update.mutateAsync(nc)} onMonitor={(on) => setMonitor(c, on)} onEdit={setEditing}
               expanded={expanded === c.id} onToggleExpand={() => setExpanded(expanded === c.id ? null : c.id)} />
           ))}
         </div>

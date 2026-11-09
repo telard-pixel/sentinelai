@@ -340,10 +340,16 @@ async def update_camera(camera_id: str, body: CameraIn):
             and data["nvr_username"] == old.nvr_username and data["nvr_port"] == old.nvr_port:
         data["nvr_password"] = old.nvr_password   # campo vuoto = password invariata (solo stesso NVR e utente)
     data["url"] = restore_url_password(data["url"], old.url)
+    data["rev"] = (old.rev or 0) + 1
     cam = Camera(**data, id=old.id, created_at=old.created_at)
     if not rtsp_url_allowed(cam):
         raise HTTPException(422, RTSP_URL_ERROR)
     async with cam_lock(camera_id):
+        # 1.0.20: la revisione si controlla dentro il lucchetto (due PUT insieme con la stessa revisione: passa il primo)
+        attuale = await get_camera(camera_id)
+        if body.rev is not None and body.rev != (attuale.rev or 0):
+            raise HTTPException(409, "La telecamera è stata cambiata da un'altra finestra: ricarico i dati, poi riprova.")
+        cam.rev = (attuale.rev or 0) + 1
         await db.cameras.replace_one({"id": camera_id}, cam.model_dump())
         if cam.type in ("rtsp", "nvr") and cam.monitor:
             if manager.get(cam.id):
@@ -961,13 +967,16 @@ async def camera_monitor(camera_id: str, body: MonitorIn):
         cam = await get_camera(camera_id)
         if cam.type not in ("rtsp", "nvr"):
             raise HTTPException(400, "Solo le telecamere RTSP/NVR restano sotto controllo da sole")
-        await db.cameras.update_one({"id": camera_id}, {"$set": {"monitor": body.on}})
+        rev = (cam.rev or 0) + 1      # 1.0.20: anche Avvia/Ferma è una modifica (una pagina vecchia non la annulla)
+        await db.cameras.update_one({"id": camera_id}, {"$set": {"monitor": body.on, "rev": rev}})
+        cam.rev = rev
         if body.on:
             cam.monitor = True
             manager.ensure(cam, await load_settings())
         else:
             await manager.stop(camera_id)
-    return {"monitor": body.on}
+    cam.monitor = body.on
+    return camera_public(cam)
 
 
 @api.get("/monitor")

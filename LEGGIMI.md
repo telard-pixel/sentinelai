@@ -87,6 +87,7 @@ pubblica la Release.
 ## Ordine delle telecamere ed eventi in colonna (1.0.20)
 
 - Le telecamere si spostano trascinandole per la maniglia ⋮⋮ a sinistra del nome, sia col mouse sia col dito. Da tastiera: Tab sulla maniglia e frecce. L'ordine si salva sul server (`PUT /api/camera-order`) e vale per tutti i dispositivi. Le telecamere nuove vanno in fondo. Spostarle non riavvia i flussi.
+- Una pagina aperta da prima di una modifica fatta altrove non la cancella più: ogni telecamera ha un numero di revisione (`rev`) e un salvataggio con dati vecchi viene rifiutato (409); la pagina ricarica i dati e avvisa. Avvia/Ferma usano solo `POST /api/cameras/{id}/monitor`.
 - Su schermo largo la colonna "Eventi in tempo reale" arriva fino in fondo alle telecamere e scorre dentro; su schermo stretto resta alta al massimo 420 px.
 
 ## Monitor risorse (1.0.19)
