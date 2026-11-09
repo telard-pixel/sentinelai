@@ -54,9 +54,9 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
         const pos = new Map(ids.map((id, n) => [id, n]));
         return [...list].sort((a, b) => (pos.get(a.id) ?? ids.length) - (pos.get(b.id) ?? ids.length));
       });
-      setOrder(null);
+      if (!drag.current) setOrder(null);     // a metà trascinamento l'ordine lo tiene il trascinamento
     },
-    onError: (e) => { setOrder(null); qc.invalidateQueries({ queryKey: ["cameras"] }); toast.error("Ordine non salvato", { description: errorText(e) }); },
+    onError: (e) => { if (!drag.current) setOrder(null); qc.invalidateQueries({ queryKey: ["cameras"] }); toast.error("Ordine non salvato", { description: errorText(e) }); },
   });
   // Trascinamento (agente di prova 1.0.20): ascoltatori su window e niente cattura del puntatore sulla maniglia,
   // perché quando React sposta la scheda trascinata il browser toglieva la cattura e il trascinamento finiva dopo
@@ -67,6 +67,8 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
   const startDrag = (id, e) => {
     if (e.button > 0 || drag.current) return;
     e.preventDefault();
+    const pend = flushKeys();
+    if (pend) saveOrder.mutate(pend);
     const ids = shown.map((c) => c.id);
     const d = { id, start: ids, order: ids, last: null };
     drag.current = d;
@@ -103,7 +105,15 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
   };
   // Da tastiera: frecce per spostare di un posto; si salva poco dopo l'ultima freccia (più frecce di fila contano tutte).
   const keyTimer = useRef(null);
-  useEffect(() => () => clearTimeout(keyTimer.current), []);
+  const keyPending = useRef(null);
+  const flushKeys = () => {
+    clearTimeout(keyTimer.current);
+    const ids = keyPending.current;
+    keyPending.current = null;
+    return ids;
+  };
+  // lasciando la pagina entro 600 ms dall'ultima freccia l'ordine si salva lo stesso
+  useEffect(() => () => { const ids = flushKeys(); if (ids) http.put("/camera-order", { ids }).catch(() => {}); }, []);
   const handleFor = (id) => ({
     onPointerDown: (e) => startDrag(id, e),
     onKeyDown: (e) => {
@@ -116,7 +126,8 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
       [ids[i], ids[j]] = [ids[j], ids[i]];
       setOrder(ids);
       clearTimeout(keyTimer.current);
-      keyTimer.current = setTimeout(() => saveOrder.mutate(ids), 600);
+      keyPending.current = ids;
+      keyTimer.current = setTimeout(() => { const p = flushKeys(); if (p) saveOrder.mutate(p); }, 600);
     },
   });
 
@@ -124,7 +135,7 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
   const onErr = (e) => {
     if (e?.response?.status === 409) {
       qc.invalidateQueries({ queryKey: ["cameras"] });
-      toast.warning("Telecamera cambiata da un'altra finestra", { description: "Ho ricaricato i dati: riprova la modifica." });
+      toast.warning("La telecamera era cambiata nel frattempo", { description: "Ho ricaricato i dati veri: riprova la modifica." });
       return;
     }
     toast.error("Salvataggio non riuscito", { description: errorText(e) });
@@ -155,7 +166,11 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
   const saveDialog = (d) => {
     const close = () => setEditing(null);
     if (editing === "new") create.mutate(d, { onSuccess: close });
-    else update.mutate({ ...d, id: editing.id }, { onSuccess: () => { toast.success("Telecamera aggiornata"); close(); } });
+    else update.mutate({ ...d, id: editing.id }, {
+      onSuccess: () => { toast.success("Telecamera aggiornata"); close(); },
+      // 1.0.20 (agente di prova): con un 409 la finestra ha dati vecchi (anche Avvia/Ferma): si chiude, va riaperta
+      onError: (e) => { if (e?.response?.status === 409) close(); },
+    });
   };
 
   return (
@@ -182,7 +197,7 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
           {shown.map((c) => (
             <CameraTile key={c.id} camera={c} onEvents={onEvents} onResult={onResult} compact={cols > 1}
               dragHandle={shown.length > 1 ? handleFor(c.id) : undefined} dragging={dragId === c.id}
-              onCameraChange={(nc) => update.mutateAsync(nc)} onMonitor={(on) => setMonitor(c, on)} onEdit={setEditing}
+              onCameraChange={(nc) => update.mutateAsync(nc).catch(() => null)} onMonitor={(on) => setMonitor(c, on)} onEdit={setEditing}
               expanded={expanded === c.id} onToggleExpand={() => setExpanded(expanded === c.id ? null : c.id)} />
           ))}
         </div>

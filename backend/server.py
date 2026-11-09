@@ -327,7 +327,7 @@ async def put_camera_order(body: CameraOrder):
 async def create_camera(body: CameraIn):
     if not rtsp_url_allowed(body):
         raise HTTPException(422, RTSP_URL_ERROR)
-    cam = Camera(**body.model_dump())
+    cam = Camera(**{**body.model_dump(), "rev": 0})      # la revisione la decide il server
     await db.cameras.insert_one(cam.model_dump())
     return camera_public(cam)
 
