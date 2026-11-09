@@ -23,7 +23,7 @@ export default function LiveEvents({ events, onOpen }) {
         <h3 className="font-heading text-sm font-semibold tracking-wide text-gray-100">Eventi in tempo reale</h3>
         <span className="font-mono text-[10px] uppercase tracking-widest text-gray-500">{events.length} sessione</span>
       </div>
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2" style={{ maxHeight: 420 }}>
+      <div className="live-events-list min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
         {events.length === 0 && (
           <p className="px-3 py-10 text-center text-sm text-gray-500">Gli attraversamenti e i transiti compariranno qui.</p>
         )}

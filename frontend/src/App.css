@@ -75,3 +75,17 @@
 /* 1.0.9 (agente di prova): nel tema chiaro il verde salvia del passaggio del mouse era troppo scuro per il testo
    scuro dei tasti (contrasto 3,6): qui un salvia più chiaro (contrasto ~7). */
 :root:not(.dark) .hover\:bg-emerald-400:hover { background-color: rgb(125 172 146); }
+
+/* 1.0.20 (richiesta di Roberto): telecamere da spostare trascinandole + colonna eventi lunga quanto le telecamere. */
+.monitor-side { display: flex; flex-direction: column; gap: 1rem; }
+.live-events-list { max-height: 420px; }
+@media (min-width: 1280px) {
+  /* la colonna di destra non spinge l'altezza della riga: la decide la griglia delle telecamere */
+  .monitor-side-wrap { position: relative; min-height: 560px; }
+  .monitor-side { position: absolute; inset: 0; }
+  .monitor-side .live-events-list { max-height: none; }
+}
+.camera-drag-handle { cursor: grab; touch-action: none; }
+.camera-drag-handle:active { cursor: grabbing; }
+.camera-drag-handle:focus-visible { outline: 2px solid rgb(var(--em400)); outline-offset: 1px; }
+.camera-dragging { opacity: .55; box-shadow: 0 0 0 2px rgb(var(--em400) / .6); }

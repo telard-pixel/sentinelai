@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Square, Columns2, Columns3, RectangleHorizontal } from "lucide-react";
 import { toast } from "sonner";
@@ -35,6 +35,75 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
     else delete next[id];
     return next;
   }), []);
+
+  // 1.0.20: ordine delle telecamere trascinandole per la maniglia (mouse e dito: pointer events, non il
+  // drag&drop HTML5 che sul telefono non va). Durante il trascinamento l'ordine vive qui; al rilascio si salva
+  // sul server (PUT /camera-order), uguale per tutti i dispositivi.
+  const [order, setOrder] = useState(null);
+  const [dragId, setDragId] = useState(null);
+  const drag = useRef(null);
+  const shown = useMemo(() => {
+    if (!order) return cameras;
+    const byId = new Map(cameras.map((c) => [c.id, c]));
+    return [...order.map((id) => byId.get(id)).filter(Boolean), ...cameras.filter((c) => !order.includes(c.id))];
+  }, [order, cameras]);
+  const saveOrder = useMutation({
+    mutationFn: (ids) => http.put("/camera-order", { ids }).then((r) => r.data),
+    onSuccess: ({ ids }) => {
+      qc.setQueryData(["cameras"], (list = []) => {
+        const pos = new Map(ids.map((id, n) => [id, n]));
+        return [...list].sort((a, b) => (pos.get(a.id) ?? ids.length) - (pos.get(b.id) ?? ids.length));
+      });
+      setOrder(null);
+    },
+    onError: (e) => { setOrder(null); qc.invalidateQueries({ queryKey: ["cameras"] }); toast.error("Ordine non salvato", { description: errorText(e) }); },
+  });
+  const finishDrag = () => {
+    const d = drag.current;
+    drag.current = null;
+    setDragId(null);
+    if (!d) return;
+    if (d.order.join() !== d.start.join()) saveOrder.mutate(d.order);
+    else setOrder(null);
+  };
+  const handleFor = (id) => ({
+    onPointerDown: (e) => {
+      if (e.button > 0 || saveOrder.isPending) return;
+      e.preventDefault();
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      const ids = shown.map((c) => c.id);
+      drag.current = { id, start: ids, order: ids };
+      setOrder(ids);
+      setDragId(id);
+    },
+    onPointerMove: (e) => {
+      const d = drag.current;
+      if (!d || d.id !== id) return;
+      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-camera-id]")?.dataset.cameraId;
+      if (!over || over === id) return;
+      const from = d.order.indexOf(id), to = d.order.indexOf(over);
+      if (from < 0 || to < 0) return;
+      const next = d.order.filter((x) => x !== id);
+      next.splice(to, 0, id);
+      d.order = next;
+      setOrder(next);
+    },
+    onPointerUp: finishDrag,
+    onPointerCancel: finishDrag,
+    onLostPointerCapture: () => { if (drag.current?.id === id) finishDrag(); },
+    // da tastiera: frecce per spostare di un posto
+    onKeyDown: (e) => {
+      const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[e.key];
+      if (!step || saveOrder.isPending) return;
+      e.preventDefault();
+      const ids = shown.map((c) => c.id);
+      const i = ids.indexOf(id), j = i + step;
+      if (j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      setOrder(ids);
+      saveOrder.mutate(ids);
+    },
+  });
 
   const onErr = (e) => toast.error("Salvataggio non riuscito", { description: errorText(e) });
   const update = useMutation({
@@ -83,16 +152,21 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
           <div className="panel flex flex-col items-center gap-3 py-20 text-gray-500"><Square className="h-8 w-8" />Nessuna telecamera configurata</div>
         )}
         <div className={`grid grid-cols-1 gap-3 ${LAYOUTS.find((l) => l[0] === cols)[2]}`} data-testid="camera-grid">
-          {cameras.map((c) => (
+          {shown.map((c) => (
             <CameraTile key={c.id} camera={c} onEvents={onEvents} onResult={onResult} compact={cols > 1}
+              dragHandle={shown.length > 1 ? handleFor(c.id) : undefined} dragging={dragId === c.id}
               onCameraChange={(nc) => update.mutateAsync(nc)} onEdit={setEditing}
               expanded={expanded === c.id} onToggleExpand={() => setExpanded(expanded === c.id ? null : c.id)} />
           ))}
         </div>
       </div>
-      <div className="flex flex-col gap-4 xl:col-span-3">
-        <CounterGrid result={agg} totals={totals} />
-        <LiveEvents events={liveEvents} onOpen={onOpenEvent} />
+      {/* 1.0.20: la colonna di destra arriva fino in fondo alle telecamere (su schermo largo la sua altezza la
+          decide la colonna delle telecamere, gli eventi scorrono dentro); su schermo stretto resta com'era */}
+      <div className="monitor-side-wrap xl:col-span-3">
+        <div className="monitor-side">
+          <CounterGrid result={agg} totals={totals} />
+          <LiveEvents events={liveEvents} onOpen={onOpenEvent} />
+        </div>
       </div>
       <CameraDialog camera={editing} onClose={() => setEditing(null)} onSave={saveDialog}
         onDelete={(c) => { remove.mutate(c); setEditing(null); }} />

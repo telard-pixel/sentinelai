@@ -293,10 +293,34 @@ async def put_settings(s: Settings):
 
 # ---------------------------------------------------------------- telecamere
 
+async def camera_order() -> list[str]:
+    doc = await db.settings.find_one({"_id": "camera_order"}, {"_id": 0})
+    ids = (doc or {}).get("ids")
+    return [i for i in ids if isinstance(i, str)] if isinstance(ids, list) else []
+
+
 @api.get("/cameras")
 async def list_cameras():
     docs = await db.cameras.find({}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    # 1.0.20: ordine scelto trascinando le telecamere (richiesta di Roberto); le nuove o non ordinate in fondo,
+    # nell'ordine di creazione (sort stabile)
+    pos = {cid: n for n, cid in enumerate(await camera_order())}
+    docs.sort(key=lambda d: pos.get(d.get("id"), len(pos)))
     return [camera_public(Camera(**d)) for d in docs]
+
+
+class CameraOrder(BaseModel):
+    ids: list[str] = Field(default_factory=list, max_length=200)
+
+
+@api.put("/camera-order")
+async def put_camera_order(body: CameraOrder):
+    """Salva l'ordine delle telecamere nella griglia: vale per tutti i dispositivi. Non tocca le telecamere
+    (nessun riavvio dei flussi). Si tengono solo id esistenti, una volta sola."""
+    esistenti = {d["id"] for d in await db.cameras.find({}, {"_id": 0, "id": 1}).to_list(200)}
+    ids = list(dict.fromkeys(i for i in body.ids if i in esistenti))
+    await db.settings.replace_one({"_id": "camera_order"}, {"_id": "camera_order", "ids": ids}, upsert=True)
+    return {"ids": ids}
 
 
 @api.post("/cameras")

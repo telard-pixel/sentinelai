@@ -84,6 +84,11 @@ Costruzione: GitHub Actions (`.github/workflows/windows.yml`) compila l'app, esp
 PyInstaller e l'installer con Inno Setup, **prova l'exe e l'installer** (`SentinelAI.exe --prova`) e con un tag `vX.Y.Z`
 pubblica la Release.
 
+## Ordine delle telecamere ed eventi in colonna (1.0.20)
+
+- Le telecamere si spostano trascinandole per la maniglia ⋮⋮ a sinistra del nome, sia col mouse sia col dito. Da tastiera: Tab sulla maniglia e frecce. L'ordine si salva sul server (`PUT /api/camera-order`) e vale per tutti i dispositivi. Le telecamere nuove vanno in fondo. Spostarle non riavvia i flussi.
+- Su schermo largo la colonna "Eventi in tempo reale" arriva fino in fondo alle telecamere e scorre dentro; su schermo stretto resta alta al massimo 420 px.
+
 ## Monitor risorse (1.0.19)
 
 Icona "attività" nella barra in alto: finestra "Risorse in tempo reale", aggiornata ogni 2 s (GET /api/risorse;

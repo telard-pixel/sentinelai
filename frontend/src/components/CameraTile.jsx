@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Play, Square, Maximize2, Minimize2, Settings2, Camera, Radio, Film, Clapperboard, Server } from "lucide-react";
+import { Play, Square, Maximize2, Minimize2, Settings2, Camera, Radio, Film, Clapperboard, Server, GripVertical } from "lucide-react";
 import { useStream } from "@/hooks/useStream";
 import { http } from "@/lib/api";
 import LiveFeed from "@/components/LiveFeed";
@@ -21,7 +21,7 @@ function Stat({ label, value, color, testid }) {
   );
 }
 
-export default function CameraTile({ camera, onEvents, onResult, onCameraChange, onEdit, expanded, onToggleExpand, compact }) {
+export default function CameraTile({ camera, onEvents, onResult, onCameraChange, onEdit, expanded, onToggleExpand, compact, dragHandle, dragging }) {
   const stream = useStream(onEvents);
   const fileRef = useRef(null);
   const Icon = SOURCE_META[camera.type].icon;
@@ -56,8 +56,13 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
   };
 
   return (
-    <div className={`panel overflow-hidden ${expanded ? "col-span-full" : ""}`} data-testid={`camera-tile-${camera.id}`}>
+    <div className={`panel overflow-hidden ${expanded ? "col-span-full" : ""} ${dragging ? "camera-dragging" : ""}`} data-testid={`camera-tile-${camera.id}`} data-camera-id={camera.id}>
       <div className="flex items-center gap-2 border-b border-white/10 bg-raised px-3 py-2">
+        {/* 1.0.20: maniglia per spostare la telecamera trascinandola (mouse e dito) */}
+        {dragHandle && (
+          <button type="button" {...dragHandle} data-testid={`camera-drag-${camera.id}`} title="Trascina per spostare" aria-label={`Sposta ${camera.name}`}
+            style={{ marginLeft: -4 }} className="camera-drag-handle rounded p-0.5 text-gray-500 hover:bg-white/5 hover:text-gray-200"><GripVertical className="h-4 w-4" /></button>
+        )}
         <Icon className="h-3.5 w-3.5 text-emerald-400" />
         <span className="truncate font-heading text-sm font-semibold text-gray-100" data-testid={`camera-name-${camera.id}`}>{camera.name}</span>
         {camera.prova && <span className="rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider" style={{ background: "rgba(14,165,233,0.15)", color: "#7DD3FC" }} data-testid={`camera-prova-${camera.id}`}>prova</span>}
