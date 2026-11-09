@@ -88,9 +88,10 @@ pubblica la Release.
 
 - Solo sul server Linux (CT/Docker): SentinelAI legge la temperatura del processore da `/sys/class/hwmon` (coretemp/k10temp; nel CT si vede quella del Proxmox, in sola lettura). Si vede nel Monitor risorse, con grafico.
 - Regolazione automatica (accesa di serie, limite 72 °C, si cambia nel Monitor risorse; `PUT /api/temperatura {auto, limite}`), SOLO sulle telecamere di prova:
-  - 30 s sopra il limite: le telecamere di prova vengono analizzate un terzo delle volte;
-  - altri 30 s sopra: le telecamere di prova vanno in pausa (flusso chiuso, niente decodifica);
-  - 2 minuti sotto (limite − 5 °C): si torna indietro di uno scalino alla volta.
+  - si guarda la media degli ultimi 30 s (sensore "Package" del processore);
+  - media sopra il limite: le telecamere di prova vengono analizzate un terzo delle volte;
+  - ancora sopra dopo 30 s: le telecamere di prova vanno in pausa (flusso chiuso, niente decodifica);
+  - 2 minuti con la media sotto (limite − 2 °C): si torna indietro di uno scalino alla volta (il conto riparte solo se la media torna sopra il limite).
 - Le telecamere vere (Garage, Sala…) non vengono MAI rallentate. Ogni cambio di scalino finisce nel registro.
 - Sull'app Windows la temperatura non si legge: il riquadro dice "non disponibile" e la regolazione non fa niente.
 

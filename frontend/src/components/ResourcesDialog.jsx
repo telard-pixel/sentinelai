@@ -90,12 +90,12 @@ function Temperatura({ t, onSaved }) {
       <Barra valore={t.temperatura == null ? null : ((t.temperatura - 30) / 60) * 100} />
       <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-gray-300">
         <label className="flex items-center gap-2">
-          <Switch data-testid="res-temp-auto" checked={!!t.auto} disabled={salvo} onCheckedChange={(v) => salva({ auto: v })} />
+          <Switch data-testid="res-temp-auto" checked={!!t.auto} disabled={salvo || t.temperatura == null} onCheckedChange={(v) => salva({ auto: v })} />
           Regola da solo
         </label>
         <label className="flex items-center gap-2">
           limite
-          <input data-testid="res-temp-limite" type="number" min={55} max={90} value={limite} disabled={salvo}
+          <input data-testid="res-temp-limite" type="number" min={55} max={90} value={limite} disabled={salvo || t.temperatura == null}
             onChange={(e) => setLimite(e.target.value)}
             onBlur={() => { const v = Math.round(Number(limite)); if (v >= 55 && v <= 90 && v !== t.limite) salva({ limite: v }); else setLimite(t.limite); }}
             onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
@@ -104,7 +104,7 @@ function Temperatura({ t, onSaved }) {
         </label>
       </div>
       <p className="mt-2 font-mono text-[10px] text-gray-500">
-        Sopra il limite per 30 s: prima le telecamere di prova vengono analizzate meno spesso, poi vanno in pausa. Tornano normali sotto {t.ripresa} °C per 2 minuti. Le telecamere vere (non di prova) non vengono mai rallentate.
+        Si guarda la media degli ultimi 30 s{t.media != null ? ` (ora ${Math.round(t.media)} °C)` : ""}. Sopra il limite: prima le telecamere di prova vengono analizzate meno spesso, poi vanno in pausa. Tornano normali, uno scalino alla volta, dopo 2 minuti con la media sotto {t.ripresa} °C. Le telecamere vere (non di prova) non vengono mai rallentate.
       </p>
     </div>
   );

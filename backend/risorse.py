@@ -135,6 +135,12 @@ class Misuratore:
         self._seq: dict = {}       # camera_id -> (seq del lettore, istante)
 
     def campione(self, manager, detector) -> dict:
+        # 1.0.21: prima di tutto la temperatura, in una prova a sé: un errore nel resto del campione non deve
+        # congelare la regolazione (agente di prova)
+        try:
+            termico.aggiorna(leggi_processore())
+        except Exception:  # noqa: BLE001
+            logger.exception("lettura della temperatura non riuscita")
         ora, cpu_proc = time.monotonic(), time.process_time()
         sis = _cpu_sistema()
         n_ai, t_ai = getattr(detector, "n_analisi", 0), getattr(detector, "t_analisi", 0.0)
@@ -149,8 +155,6 @@ class Misuratore:
             out["ia_al_secondo"] = _r(dn / dt)
             out["ia_ms"] = _r(dtai / dn * 1000, 0) if dn else None
             out["ia_occupata"] = _r(min(dtai / dt * 100, 100), 0)
-        # 1.0.21: temperatura del processore e regolazione automatica (solo server Linux; altrove None)
-        termico.aggiorna(leggi_processore())
         out["termico"] = termico.stato()
         out["temperatura"] = out["termico"]["temperatura"]
         mp, mu, mt = _memoria()
@@ -181,7 +185,10 @@ class Misuratore:
         return out
 
     def stato(self) -> dict:
-        return {"passo": PASSO, "ultimo": self.ultimo, "storia": list(self.storia)}
+        # 1.0.21 (agente di prova): impostazioni della temperatura lette ADESSO, non quelle del campione di 2 s fa
+        # (altrimenti un limite appena salvato tornava per un attimo al valore vecchio e si poteva perdere)
+        ultimo = {**self.ultimo, "termico": termico.stato()} if self.ultimo else self.ultimo
+        return {"passo": PASSO, "ultimo": ultimo, "storia": list(self.storia)}
 
     async def giro(self, manager, detector):
         ultimo_errore = None
