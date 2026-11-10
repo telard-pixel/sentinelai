@@ -68,6 +68,12 @@ class CameraIn(BaseModel):
     #: 1.0.17: telecamera di prova (es. webcam pubblica del traffico): l'IA analizza e registra gli eventi, ma non
     #: scattano mai allarmi, foto su Telegram né clip (le regole di allarme valgono per tutte le telecamere).
     prova: bool = False
+    #: 1.0.23 (richiesta di Roberto): "Allarme attivo". Spento = la telecamera guarda e registra gli eventi ma non
+    #: riferisce: niente allarmi, Telegram né clip (né dalle regole né dalle zone). Acceso di base, come prima.
+    alarm_enabled: bool = True
+    #: 1.0.23: per quali categorie questa telecamera può dare l'allarme (es. Sala senza "animale").
+    #: Vuoto = tutte. Vale per le regole di allarme e per le zone.
+    alarm_categories: List[str] = []
     line: Line = Line()
     zones: List[Zone] = []
     #: 1.0.20: numero di revisione. Ogni modifica lo aumenta; un PUT che porta una revisione vecchia (pagina aperta
@@ -83,12 +89,24 @@ class CameraIn(BaseModel):
             raise ValueError("Indirizzo NVR non valido")
         if self.type == "rtsp" and not self.url.strip():
             raise ValueError("URL del flusso obbligatorio")
+        # categorie sconosciute via; tutte e quattro = nessun limite
+        cats = [c for c in CATEGORIES if c in self.alarm_categories]
+        self.alarm_categories = [] if len(cats) == len(CATEGORIES) else cats
         return self
 
 
 class Camera(CameraIn):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def alarms_on(c: CameraIn) -> bool:
+    """La telecamera può dare allarmi (e quindi clip)? No se è di prova o con "Allarme attivo" spento."""
+    return bool(c.alarm_enabled) and not c.prova
+
+
+def alarm_allowed(c: CameraIn, category: str) -> bool:
+    return alarms_on(c) and (not c.alarm_categories or category in c.alarm_categories)
 
 
 def nvr_path(c: CameraIn) -> str:

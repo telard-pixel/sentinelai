@@ -1069,6 +1069,23 @@ async def camera_monitor(camera_id: str, body: MonitorIn):
     return camera_public(cam)
 
 
+class AlarmIn(BaseModel):
+    on: bool
+
+
+@api.post("/cameras/{camera_id}/alarm")
+async def camera_alarm(camera_id: str, body: AlarmIn):
+    """1.0.23: interruttore "Allarme attivo" della telecamera, senza rimandare tutta la telecamera (come Avvia/Ferma).
+    Vale subito anche per una telecamera già accesa."""
+    async with cam_lock(camera_id):
+        cam = await get_camera(camera_id)
+        cam.alarm_enabled, cam.rev = body.on, (cam.rev or 0) + 1
+        await db.cameras.update_one({"id": camera_id}, {"$set": {"alarm_enabled": body.on, "rev": cam.rev}})
+        manager.reload_camera(cam, await load_settings())
+    logger.info("[%s] allarme %s", cam.name, "attivo" if body.on else "spento (solo visione)")
+    return camera_public(cam)
+
+
 @api.get("/monitor")
 async def monitor_status():
     return {cid: {**w.status, "viewers": len(w.viewers), "fps": (w.last or {}).get("fps", 0)} for cid, w in manager.workers.items()}

@@ -89,3 +89,8 @@
 .camera-drag-handle:active { cursor: grabbing; }
 .camera-drag-handle:focus-visible { outline: 2px solid rgb(var(--em400)); outline-offset: 1px; }
 .camera-dragging { opacity: .55; box-shadow: 0 0 0 2px rgb(var(--em400) / .6); }
+
+/* 1.0.23: sul telefono dell'interruttore "Allarme attivo" resta solo la campanella (il nome della telecamera spariva) */
+@media (max-width: 640px) {
+  .camera-alarm-label { display: none; }
+}

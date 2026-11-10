@@ -144,6 +144,12 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
     qc.setQueryData(["cameras"], (list = []) => list.map((x) => (x.id === c.id ? { ...x, monitor: r.data.monitor, rev: r.data.rev } : x)));
     return r.data;
   }).catch((e) => { onErr(e); throw e; });
+  // 1.0.23: interruttore "Allarme attivo" (solo quello, come Avvia/Ferma)
+  const setAlarm = (c, on) => http.post(`/cameras/${c.id}/alarm`, { on }).then((r) => {
+    qc.setQueryData(["cameras"], (list = []) => list.map((x) => (x.id === c.id ? { ...x, alarm_enabled: r.data.alarm_enabled, rev: r.data.rev } : x)));
+    toast[on ? "success" : "warning"](on ? `${c.name}: allarme attivo` : `${c.name}: allarme spento, guarda soltanto`);
+    return r.data;
+  }).catch((e) => { onErr(e); throw e; });
   const update = useMutation({
     mutationFn: (c) => http.put(`/cameras/${c.id}`, toBody(c)).then((r) => r.data),
     onSuccess: (c) => qc.setQueryData(["cameras"], (list = []) => list.map((x) => (x.id === c.id ? c : x))),
@@ -195,9 +201,9 @@ export default function MonitorView({ onEvents, liveEvents, totals, onOpenEvent 
         )}
         <div className={`grid grid-cols-1 gap-3 ${LAYOUTS.find((l) => l[0] === cols)[2]}`} data-testid="camera-grid">
           {shown.map((c) => (
-            <CameraTile key={c.id} camera={c} onEvents={onEvents} onResult={onResult} compact={cols > 1}
+            <CameraTile key={c.id} camera={c} onEvents={onEvents} onResult={onResult} compact={cols > 1} tight={cols > 2 && expanded !== c.id}
               dragHandle={shown.length > 1 ? handleFor(c.id) : undefined} dragging={dragId === c.id}
-              onCameraChange={(nc) => update.mutateAsync(nc).catch(() => null)} onMonitor={(on) => setMonitor(c, on)} onEdit={setEditing}
+              onCameraChange={(nc) => update.mutateAsync(nc).catch(() => null)} onMonitor={(on) => setMonitor(c, on)} onAlarm={(on) => setAlarm(c, on)} onEdit={setEditing}
               expanded={expanded === c.id} onToggleExpand={() => setExpanded(expanded === c.id ? null : c.id)} />
           ))}
         </div>

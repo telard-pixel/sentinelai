@@ -16,7 +16,7 @@ import cv2
 import telegram_bot
 from clips import ClipRecorder
 from detection import SURE_HITS, COCO_IT, Tracker, same_spot, annotated_snapshot, category_of, detector, encode_jpeg, heading_of, within_segment
-from models import HEAT_H, HEAT_W, Camera, Event, Settings, Zone
+from models import HEAT_H, HEAT_W, Camera, Event, Settings, Zone, alarm_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,9 @@ class StreamSession:
         dx, dy = src[-1][0] - src[0][0], src[-1][1] - src[0][1]
         name, arrow, ang = heading_of(dx, dy, 0.0)
         cat = category_of(tr.cls)
-        if self.camera.prova:   # 1.0.17: telecamera di prova, mai allarmi/Telegram/clip
+        # 1.0.17: telecamera di prova, mai allarmi/Telegram/clip. 1.0.23: lo stesso con "Allarme attivo" spento e
+        # per le categorie tolte dagli allarmi di questa telecamera: l'evento si registra, ma non riferisce.
+        if not alarm_allowed(self.camera, cat):
             rule = None
         else:
             rule = f"Zona «{zone.name}»" if zone else match_rule(self.settings, cat, direction, self.tz_offset)

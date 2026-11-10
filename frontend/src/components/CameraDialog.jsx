@@ -7,8 +7,42 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ZoneFields } from "@/components/ZoneDialog";
 import { SOURCE_META } from "@/components/CameraTile";
+import { CATEGORY } from "@/lib/api";
 
-const NEW_CAMERA = { name: "", type: "nvr", url: "", device_id: "", nvr_brand: "hikvision", nvr_host: "", nvr_port: 554, nvr_username: "", nvr_password: "", nvr_channel: 1, nvr_stream: "sub", nvr_path: "", prova: false, line: { enabled: true, x1: 0.08, y1: 0.62, x2: 0.92, y2: 0.62, invert: false }, zones: [] };
+// 1.0.23: allarmi di QUESTA telecamera. alarm_categories vuoto = tutte le categorie.
+function AlarmFields({ d, setD }) {
+  const all = Object.keys(CATEGORY);
+  const active = d.alarm_categories?.length ? d.alarm_categories : all;
+  const on = d.alarm_enabled !== false;
+  const toggle = (k) => {
+    const next = active.includes(k) ? active.filter((x) => x !== k) : all.filter((x) => active.includes(x) || x === k);
+    if (!next.length) return;                       // almeno una: per non avere allarmi c'è l'interruttore
+    setD({ ...d, alarm_categories: next.length === all.length ? [] : next });
+  };
+  return (
+    <div className="space-y-3 rounded-md border border-white/10 p-3" data-testid="camera-alarm">
+      <label className="flex items-center gap-2">
+        <Switch data-testid="camera-alarm-switch" checked={on} onCheckedChange={(v) => setD({ ...d, alarm_enabled: v })} />
+        <span className="text-xs text-gray-400"><span className="font-semibold text-gray-200">Allarme attivo</span>: {on
+          ? "questa telecamera dà gli allarmi impostati (regole e zone), con Telegram e clip."
+          : "spento: la telecamera guarda e registra gli eventi, ma non dà allarmi, Telegram né clip."}</span>
+      </label>
+      <div className="flex flex-wrap items-center gap-2" style={on ? undefined : { opacity: 0.45 }}>
+        <span className="font-mono text-[10px] uppercase tracking-widest text-gray-500">Allarmi per</span>
+        {Object.entries(CATEGORY).map(([k, c]) => (
+          <button key={k} type="button" data-testid={`camera-alarm-cat-${k}`} onClick={() => toggle(k)} className="rounded border px-2 py-0.5 font-mono text-[11px]"
+            style={active.includes(k) ? { borderColor: c.color, color: c.color, background: `${c.color}1A` } : { borderColor: "rgb(var(--c-white) / 0.1)", color: "rgb(var(--g400))", textDecoration: "line-through" }}>
+            {c.label}
+          </button>
+        ))}
+        {active.length === all.length && <span className="font-mono text-[10px] text-gray-500">(tutti)</span>}
+      </div>
+      <p className="font-mono text-[10px] text-gray-500">Tocca una categoria per toglierla dagli allarmi di questa telecamera (es. Animali in Sala): continuerà a vederla e a registrarla, senza avvisare.</p>
+    </div>
+  );
+}
+
+const NEW_CAMERA = { name: "", type: "nvr", url: "", device_id: "", nvr_brand: "hikvision", nvr_host: "", nvr_port: 554, nvr_username: "", nvr_password: "", nvr_channel: 1, nvr_stream: "sub", nvr_path: "", prova: false, alarm_enabled: true, alarm_categories: [], line: { enabled: true, x1: 0.08, y1: 0.62, x2: 0.92, y2: 0.62, invert: false }, zones: [] };
 
 const inp = "h-9 border-white/10 bg-black/30 font-mono text-xs";
 
@@ -105,6 +139,7 @@ export default function CameraDialog({ camera, onClose, onSave, onDelete }) {
             <Switch data-testid="camera-prova-switch" checked={!!d.prova} onCheckedChange={(v) => setD({ ...d, prova: v })} />
             <span className="text-xs text-gray-400"><span className="font-semibold text-gray-200">Telecamera di prova</span>: l'IA analizza e conta, ma non manda mai allarmi, foto su Telegram né clip (per esempio una webcam pubblica del traffico).</span>
           </label>
+          {!d.prova && <AlarmFields d={d} setD={setD} />}
           {d.type === "nvr" && !d.nvr_host.trim() && (
             <p data-testid="nvr-host-missing-warning" className="font-mono text-[11px] text-amber-400">Senza indirizzo NVR la telecamera verrà salvata come disattivata.</p>
           )}

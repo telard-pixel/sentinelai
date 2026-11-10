@@ -151,3 +151,55 @@ def test_mappa_di_calore_salvata(db, finto, orologio):
     esegui(f())
     h = esegui(db.heatmaps.find_one({"category": "persona"}, {"_id": 0}))
     assert h["tracks"] == 1 and sum(h["cells"].values()) == 5
+
+
+# ------------------------------------------------------------------ 1.0.23: allarmi per telecamera
+
+ZONA_TUTTA = Zone(name="Stanza", points=[[0, 0], [1, 0], [1, 1], [0, 1]])
+
+
+def test_allarme_spento_vede_ma_non_riferisce(db, finto, orologio):
+    async def f():
+        s = sessione(db, zones=[ZONA_TUTTA], alarm_enabled=False)
+        s.settings = Settings(alert_rules=SEMPRE, clips_enabled=True, clip_pre_seconds=1, clip_post_seconds=1)
+        s.recorder.settings = s.settings
+        ev = await gira(s, finto, orologio, [(0.5, 0.30 + 0.04 * i) for i in range(16)])
+        vuoto = len(s.recorder.buffer)
+        await s.close()
+        return ev, vuoto
+    ev, vuoto = esegui(f())
+    assert {e["type"] for e in ev} == {"zona_ingresso", "attraversamento"}        # gli eventi ci sono
+    assert not any(e["alert"] or e["alert_rule"] or e["clip_id"] for e in ev)      # ma nessun allarme
+    assert esegui(db.clips.count_documents({})) == 0 and vuoto == 0
+
+
+def test_allarme_riacceso_vale_subito(db, finto, orologio):
+    async def f():
+        s = sessione(db, zones=[ZONA_TUTTA], line=Line(enabled=False), alarm_enabled=False)
+        a = await gira(s, finto, orologio, [(0.3, 0.5)] * 5)
+        s.update(s.camera.model_copy(update={"alarm_enabled": True}), s.settings)
+        b = await gira(s, finto, orologio, [None] * 12 + [(0.7, 0.5)] * 5)          # una persona nuova
+        await s.close()
+        return a, b
+    a, b = esegui(f())
+    assert [e["alert"] for e in a] == [False] and [e["alert"] for e in b] == [True]
+
+
+def test_sala_senza_animali(db, finto, orologio):
+    async def f():
+        s = sessione(db, zones=[ZONA_TUTTA], line=Line(enabled=False), alarm_categories=["persona", "veicolo", "oggetto"])
+        gatto = await gira(s, finto, orologio, [(0.3, 0.5)] * 6, cls=15)
+        persona = await gira(s, finto, orologio, [None] * 12 + [(0.7, 0.5)] * 6)
+        await s.close()
+        return gatto, persona
+    gatto, persona = esegui(f())
+    assert [(e["category"], e["alert"]) for e in gatto] == [("animale", False)]
+    assert [(e["category"], e["alert"]) for e in persona] == [("persona", True)]
+    assert esegui(db.clips.count_documents({})) == 1
+
+
+def test_categorie_degli_allarmi_normalizzate():
+    assert Camera(name="a", type="demo", alarm_categories=["animale", "boh", "persona"]).alarm_categories == ["persona", "animale"]
+    assert Camera(name="a", type="demo", alarm_categories=["persona", "veicolo", "animale", "oggetto"]).alarm_categories == []
+    vecchia = Camera(**{"name": "salvata prima", "type": "demo"})
+    assert vecchia.alarm_enabled is True and vecchia.alarm_categories == []

@@ -208,3 +208,16 @@ def test_statistiche_tenute_pochi_secondi(api, db, monkeypatch):
     assert api.get("/api/stats").json()["totals"]["total"] == 1               # stessa risposta entro 4 s
     monkeypatch.setattr(server, "STATS_SECONDS", 0)
     assert api.get("/api/stats").json()["totals"]["total"] == 2
+
+
+def test_interruttore_allarme_attivo(api):
+    c = api.post("/api/cameras", json=CAM).json()
+    assert c["alarm_enabled"] is True and c["alarm_categories"] == []
+    r = api.post(f"/api/cameras/{c['id']}/alarm", json={"on": False}).json()
+    assert r["alarm_enabled"] is False and r["rev"] == 1 and r["url"] == c["url"]
+    assert api.get("/api/cameras").json()[0]["alarm_enabled"] is False
+    # una pagina rimasta indietro non lo riaccende salvando la telecamera
+    assert api.put(f"/api/cameras/{c['id']}", json={**CAM, "rev": 0}).status_code == 409
+    r = api.put(f"/api/cameras/{c['id']}", json={**CAM, "url": c["url"], "rev": 1, "alarm_enabled": False, "alarm_categories": ["persona"]}).json()
+    assert r["alarm_enabled"] is False and r["alarm_categories"] == ["persona"]
+    assert api.post("/api/cameras/inesistente/alarm", json={"on": True}).status_code == 404

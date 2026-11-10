@@ -16,6 +16,7 @@ import logging
 
 import telegram_bot
 from detection import encode_jpeg
+from models import alarms_on
 
 logger = logging.getLogger("clips")
 
@@ -270,7 +271,8 @@ class ClipRecorder:
 
     async def push(self, now, frame, tracks):
         # 1.0.17: telecamera di prova = mai clip, quindi niente JPEG inutili (una clip già iniziata finisce)
-        if (not self.settings.clips_enabled or self.camera.prova) and not self.active:
+        # (1.0.23: lo stesso con "Allarme attivo" spento)
+        if (not self.settings.clips_enabled or not alarms_on(self.camera)) and not self.active:
             self.buffer.clear()
             self.clean.clear()
             return

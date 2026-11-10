@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Play, Square, Maximize2, Minimize2, Settings2, Camera, Radio, Film, Clapperboard, Server, GripVertical } from "lucide-react";
+import { Play, Square, Maximize2, Minimize2, Settings2, Camera, Radio, Film, Clapperboard, Server, GripVertical, Bell, BellOff } from "lucide-react";
 import { useStream } from "@/hooks/useStream";
 import LiveFeed from "@/components/LiveFeed";
 
@@ -20,7 +20,7 @@ function Stat({ label, value, color, testid }) {
   );
 }
 
-export default function CameraTile({ camera, onEvents, onResult, onCameraChange, onMonitor, onEdit, expanded, onToggleExpand, compact, dragHandle, dragging }) {
+export default function CameraTile({ camera, onEvents, onResult, onCameraChange, onMonitor, onAlarm, onEdit, expanded, onToggleExpand, compact, tight, dragHandle, dragging }) {
   const stream = useStream(onEvents);
   const fileRef = useRef(null);
   const Icon = SOURCE_META[camera.type].icon;
@@ -76,6 +76,19 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
           ) : (
             <button data-testid={`camera-start-${camera.id}`} onClick={onStart} className="flex items-center gap-1 rounded bg-emerald-500 px-2.5 py-1 font-mono text-[10px] uppercase text-[#04130D] hover:bg-emerald-400"><Play className="h-3 w-3" /> Avvia</button>
           )}
+          {/* 1.0.23: "Allarme attivo" di questa telecamera; spento = guarda e registra, ma non avvisa */}
+          {!camera.prova && onAlarm && (() => {
+            const on = camera.alarm_enabled !== false;
+            const A = on ? Bell : BellOff;
+            return (
+              <button data-testid={`camera-alarm-${camera.id}`} onClick={() => onAlarm(!on).catch(() => {})} aria-pressed={on}
+                title={on ? "Allarme attivo: tocca per spegnerlo (la telecamera guarda soltanto)" : "Allarme spento: la telecamera guarda soltanto. Tocca per riattivarlo"}
+                className="flex items-center gap-1 rounded px-2.5 py-1 font-mono text-[10px] uppercase"
+                style={on ? { border: "1px solid rgba(98,147,123,0.5)", color: "#86B098", whiteSpace: "nowrap" } : { border: "1px solid rgba(245,158,11,0.5)", color: "#FBBF24", background: "rgba(245,158,11,0.12)", whiteSpace: "nowrap" }}>
+                <A className="h-3 w-3" /> {!tight && <span className="camera-alarm-label">{on ? "Allarme attivo" : "Allarme spento"}</span>}
+              </button>
+            );
+          })()}
           <button data-testid={`camera-expand-${camera.id}`} onClick={onToggleExpand} title={expanded ? "Riduci" : "Espandi"} className="rounded p-1.5 text-gray-400 hover:bg-white/5 hover:text-white">
             {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
           </button>
