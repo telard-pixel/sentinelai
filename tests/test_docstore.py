@@ -52,3 +52,26 @@ def test_binari_e_filtri(d):
 def test_campo_non_valido_rifiutato(d):
     with pytest.raises(ValueError):
         esegui(d.c.find({"a'); DROP TABLE c;--": 1}).to_list(1))
+
+
+def test_binari_formato_nuovo_e_righe_vecchie(d):
+    import pickle
+
+    async def f():
+        await d.c.insert_one({"id": "n", "data": b"nuovo", "altro": b"\x00" * 10})
+        riga = d._query("c", 'SELECT bin FROM "c"', [])[0][0]
+        assert bytes(riga)[:3] == b"SB1"
+        doc = await d.c.find_one({"id": "n"})
+        assert doc["data"] == b"nuovo" and doc["altro"] == b"\x00" * 10
+        # riga scritta da una versione prima della 1.0.22 (pickle): si legge ancora
+        d._exec('INSERT INTO "c" (doc, bin) VALUES (?, ?)', ('{"id": "v"}', pickle.dumps({"data": b"vecchio"})))
+        assert (await d.c.find_one({"id": "v"}))["data"] == b"vecchio"
+        # un pickle che prova a eseguire qualcosa viene rifiutato
+        class Cattivo:
+            def __reduce__(self):
+                import os
+                return (os.system, ("true",))
+        d._exec('INSERT INTO "c" (doc, bin) VALUES (?, ?)', ('{"id": "x"}', pickle.dumps({"data": Cattivo()})))
+        with pytest.raises(pickle.UnpicklingError):
+            await d.c.find_one({"id": "x"})
+    esegui(f())

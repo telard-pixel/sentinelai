@@ -225,6 +225,15 @@ class AlertRule(BaseModel):
     start: str = "00:00"
     end: str = "23:59"
 
+    @model_validator(mode="after")
+    def check_times(self):
+        # 1.0.22: un orario scritto male non manda in errore il caricamento delle impostazioni: torna al predefinito
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", self.start or ""):
+            self.start = "00:00"
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", self.end or ""):
+            self.end = "23:59"
+        return self
+
 
 class Settings(BaseModel):
     conf: float = Field(0.4, ge=0.05, le=0.99)
@@ -251,6 +260,9 @@ class Settings(BaseModel):
     # 1.0.11 (07/11/2026, gatti della Sala scambiati per persone): durante ogni clip salva anche fotogrammi PULITI
     # (senza riquadri) in DATA_DIR/addestramento, per riaddestrare il modello. Spento se non lo si accende.
     training_frames: bool = False
+    #: 1.0.22: numero di revisione, come per le telecamere. Il Salva di una pagina rimasta indietro (revisione vecchia)
+    #: viene rifiutato con 409. None = client vecchio che non lo conosce: nessun controllo.
+    rev: Optional[int] = Field(None, ge=0)
 
 
 class Event(BaseModel):

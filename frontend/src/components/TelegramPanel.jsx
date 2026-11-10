@@ -17,7 +17,7 @@ export default function TelegramPanel({ draft, setDraft }) {
     setBusy(true);
     try {
       const r = await http.post("/telegram/detect-chat").then((x) => x.data);
-      setDraft((d) => ({ ...d, telegram_chat_id: r.chat_id, telegram_chat_name: r.chat_name, telegram_enabled: true }));
+      setDraft((d) => ({ ...d, telegram_chat_id: r.chat_id, telegram_chat_name: r.chat_name, telegram_enabled: true, ...(r.rev != null ? { rev: r.rev } : {}) }));
       qc.invalidateQueries({ queryKey: ["settings"] });
       refetch();
       toast.success("Chat Telegram collegata", { description: r.chat_name });

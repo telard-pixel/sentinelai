@@ -242,6 +242,13 @@ class ClipRecorder:
         local = datetime.now(timezone.utc) - timedelta(minutes=self.tz_offset)
         return f"{self.camera.name}  {local.strftime('%d/%m/%Y %H:%M:%S')}"
 
+    def clip_caption(self, rec) -> str:
+        """1.0.22: la clip su Telegram dice telecamera e ora (prima sempre e solo "Clip allarme")."""
+        wall = rec.get("wall") or datetime.now(timezone.utc)
+        local = wall - timedelta(minutes=self.tz_offset)
+        n = len(rec.get("events") or [])
+        return f"🎬 Clip allarme\n📷 {self.camera.name}\n🕒 {local.strftime('%d/%m/%Y %H:%M:%S')}" + (f"\n{n} allarmi" if n > 1 else "")
+
     async def trigger(self, now, event_id) -> str | None:
         s = self.settings
         if not s.clips_enabled:
@@ -324,11 +331,16 @@ class ClipRecorder:
             if data:
                 # 06/11/2026 (agente di prova): l'invio a Telegram (fino a minuti) non deve far aspettare
                 # Ferma, la modifica della telecamera o l'uscita dal programma.
-                t = asyncio.create_task(telegram_bot.send_clip(self.settings, data, rec.get("caption") or "🎬 Clip allarme"))
+                t = asyncio.create_task(telegram_bot.send_clip(self.settings, data, self.clip_caption(rec)))
                 _SENDING.add(t)
                 t.add_done_callback(_SENDING.discard)
         except Exception:
-            await self.db.clips.update_one({"id": rec["id"]}, {"$set": {"status": "failed"}})
+            # 1.0.22: prima l'errore spariva senza una riga nel registro (clip "non disponibile" e nessun perché)
+            logger.exception("[%s] clip %s non salvata", self.camera.name, rec.get("id"))
+            try:
+                await self.db.clips.update_one({"id": rec["id"]}, {"$set": {"status": "failed"}})
+            except Exception:  # noqa: BLE001
+                logger.exception("[%s] clip %s: stato non aggiornato", self.camera.name, rec.get("id"))
 
     async def close(self):
         self.finish()

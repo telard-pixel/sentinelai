@@ -56,12 +56,22 @@ function Dashboard() {
       qc.invalidateQueries({ queryKey: ["cameras"] });
       toast.success("Impostazioni salvate");
     },
-    onError: (e) => toast.error("Salvataggio non riuscito", { description: errorText(e) }),
+    onError: (e) => {
+      // 1.0.22: 409 = impostazioni cambiate da un'altra finestra (telefono, PC): si ricaricano quelle vere
+      if (e?.response?.status === 409) {
+        qc.invalidateQueries({ queryKey: ["settings"] });
+        toast.warning("Le impostazioni erano cambiate nel frattempo", { description: "Ho ricaricato quelle vere: rifai la modifica e salva." });
+        return;
+      }
+      toast.error("Salvataggio non riuscito", { description: errorText(e) });
+    },
   });
+  // 1.0.22: aprendo Impostazioni o Allarmi si rileggono dal server (la pagina può essere aperta da giorni)
+  const fresh = () => qc.invalidateQueries({ queryKey: ["settings"] });
 
   return (
     <div className="min-h-screen bg-app text-gray-200">
-      <AppHeader tab={tab} setTab={(t) => { setTab(t); if (t === "allarmi") setAlertCount(0); }} modelOk={health?.model_loaded} alertCount={alertCount} onSettings={() => setSettingsOpen(true)} />
+      <AppHeader tab={tab} setTab={(t) => { setTab(t); if (t === "allarmi") { setAlertCount(0); fresh(); } }} modelOk={health?.model_loaded} alertCount={alertCount} onSettings={() => { fresh(); setSettingsOpen(true); }} />
       <main className="p-4 md:p-6">
         <div className={tab === "monitor" ? "" : "hidden"}>
           <MonitorView onEvents={onEvents} liveEvents={liveEvents} totals={stats?.totals} onOpenEvent={setOpenEvent} />

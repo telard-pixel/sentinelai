@@ -196,7 +196,22 @@ def start_server(app, host: str, port: int):
     srv = uvicorn.Server(cfg)
     t = threading.Thread(target=srv.run, daemon=True, name="server")
     t.start()
+    srv.thread = t
     return srv
+
+
+STOP_SECONDS = 25
+
+
+def stop_server(srv, seconds: float = STOP_SECONDS):
+    """1.0.22: Esci aspetta che il server abbia finito davvero (clip in corso salvata, mappa di calore scritta,
+    database chiuso). Prima aveva 1 secondo: la clip di un allarme in corso andava persa e restava "REC…" per sempre."""
+    srv.should_exit = True
+    t = getattr(srv, "thread", None)
+    if t is not None and t is not threading.current_thread():
+        t.join(seconds)
+        if t.is_alive():
+            log(f"chiusura: il server non ha finito in {seconds:.0f} s, esco lo stesso")
 
 
 def find_browser():
@@ -781,6 +796,7 @@ def _hook_aggiornamento(srv, win, args):
             except Exception:
                 pass
             win.quit()
+        stop_server(srv, 20)     # l'aggiornamento aspetta il server (lo script dell'installer ne aspetta 40)
     aggiornamento.chiudi_app = chiudi
     if args[:1] == ["--prova-aggiornamento"] and len(args) > 1:
         import shutil
@@ -844,8 +860,7 @@ def main():
         except Exception:
             log("icona di notifica non disponibile:\n" + traceback.format_exc())
         if win.run(hidden):
-            srv.should_exit = True
-            time.sleep(1)
+            stop_server(srv)
             return
         if win.tray is not None:
             # WebView2 mancante: finestra di Edge, l'icona c'è già e resta finché non si sceglie Esci.
@@ -853,7 +868,7 @@ def main():
                 open_window(port)
             while not srv.should_exit:
                 time.sleep(1)
-            time.sleep(1)
+            stop_server(srv)
             return
     if win is None:
         listen_show_requests(lambda: open_window(port))
@@ -867,8 +882,7 @@ def main():
         log("icona di notifica non disponibile:\n" + traceback.format_exc())
         while not srv.should_exit:
             time.sleep(1)
-    srv.should_exit = True
-    time.sleep(1)
+    stop_server(srv)
 
 
 if __name__ == "__main__":

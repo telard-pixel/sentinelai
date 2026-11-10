@@ -3,7 +3,6 @@
 Ricostruita il 05/11/2026: save_event e add_heat seguono i pezzi originali, il resto segue
 quello che il frontend si aspetta (tracks, events, counts, fps, zones_active)."""
 import asyncio
-import base64
 import logging
 import math
 import os
@@ -14,11 +13,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import cv2
-from fastapi import WebSocket
-
 import telegram_bot
 from clips import ClipRecorder
-from detection import SURE_HITS, COCO_IT, Tracker, same_spot, annotated_snapshot, category_of, detector, encode_jpeg, heading_of, line_side, within_segment
+from detection import SURE_HITS, COCO_IT, Tracker, same_spot, annotated_snapshot, category_of, detector, encode_jpeg, heading_of, within_segment
 from models import HEAT_H, HEAT_W, Camera, Event, Settings, Zone
 
 logger = logging.getLogger(__name__)
@@ -450,43 +447,3 @@ class LatestFrame:
 
     def stop(self):
         self.ok = False
-
-
-async def network_loop(ws: WebSocket, session: StreamSession, url: str):
-    """Flussi letti dal server (RTSP / NVR / URL http): il server manda al browser i fotogrammi già analizzati."""
-    cap = await asyncio.to_thread(open_capture, url)
-    if not cap.isOpened():
-        await ws.send_json({"type": "error", "message": "Impossibile aprire il flusso. Verifica indirizzo, utente e password."})
-        return
-    is_file = not url.lower().startswith(("rtsp", "rtmp"))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 25
-    reader = None if is_file else LatestFrame(cap)
-    await ws.send_json({"type": "ready"})
-    seq = 0
-    try:
-        while True:
-            t0 = time.monotonic()
-            if reader:
-                frame, seq = await asyncio.to_thread(reader.wait, seq)
-                ok = frame is not None
-            else:
-                ok, frame = await asyncio.to_thread(cap.read)
-            if not ok:
-                if is_file:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    continue
-                await ws.send_json({"type": "error", "message": "Flusso interrotto."})
-                break
-            result = await session.process(frame)
-            img = await asyncio.to_thread(encode_jpeg, frame, 960, 70)
-            h, w = frame.shape[:2]
-            await ws.send_json({"type": "frame", "image": base64.b64encode(img).decode(), "width": w, "height": h, **result})
-            if is_file:
-                # Un file va alla sua velocità: si saltano i fotogrammi persi mentre si analizzava.
-                for _ in range(max(0, int((time.monotonic() - t0) * fps) - 1)):
-                    await asyncio.to_thread(cap.grab)
-    finally:
-        if reader:
-            reader.stop()
-        else:
-            await asyncio.to_thread(cap.release)

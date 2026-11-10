@@ -176,9 +176,23 @@ public = APIRouter(prefix="/api")
 api = APIRouter(prefix="/api", dependencies=[Depends(require_approved)])
 
 
+_settings_lock = asyncio.Lock()
+
+
 async def load_settings() -> Settings:
     doc = await db.settings.find_one({"_id": "global"}, {"_id": 0})
     return Settings(**doc) if doc else Settings()
+
+
+async def change_settings(change) -> Settings:
+    """Legge, cambia e salva le impostazioni una richiesta alla volta, aumentando la revisione (1.0.22)."""
+    async with _settings_lock:
+        s = await load_settings()
+        s = change(s) or s
+        s.rev = ((await load_settings()).rev or 0) + 1
+        await db.settings.replace_one({"_id": "global"}, s.model_dump(), upsert=True)
+    manager.reload_settings(s)
+    return s
 
 
 async def get_camera(camera_id: str) -> Camera:
@@ -302,17 +316,23 @@ async def classes():
 
 @api.get("/settings", response_model=Settings)
 async def get_settings():
-    return await load_settings()
+    s = await load_settings()
+    s.rev = s.rev or 0          # il browser la rimanda sempre; impostazioni salvate prima della 1.0.22 = revisione 0
+    return s
 
 
 @api.put("/settings", response_model=Settings)
 async def put_settings(s: Settings):
     # La cartella dei video si cambia solo con PUT /storage/folder (controllata): il Salva generale delle
     # Impostazioni manda i valori letti all'apertura e rimetterebbe quella vecchia.
-    s.clips_folder = (await load_settings()).clips_folder
-    await db.settings.replace_one({"_id": "global"}, s.model_dump(), upsert=True)
-    manager.reload_settings(s)
-    return s
+    # 1.0.22: una pagina aperta da prima di una modifica fatta altrove (telefono rimasto aperto) porta una revisione
+    # vecchia e viene rifiutata, invece di rimettere soglie, regole e Telegram di giorni prima (come per le telecamere).
+    def change(cur: Settings):
+        if s.rev is not None and s.rev != (cur.rev or 0):
+            raise HTTPException(409, "Le impostazioni sono state cambiate da un'altra finestra: le ho ricaricate, riprova.")
+        s.clips_folder = cur.clips_folder
+        return s
+    return await change_settings(change)
 
 
 # ---------------------------------------------------------------- telecamere
@@ -508,13 +528,29 @@ async def event_snapshot(event_id: str):
 
 @api.delete("/events")
 async def clear_events():
+    _stats_cache.clear()
     r = await db.events.delete_many({})
     await db.snapshots.delete_many({})
     return {"deleted": r.deleted_count}
 
 
+_stats_cache: dict = {}
+STATS_SECONDS = 4.0
+
+
 @api.get("/stats")
 async def stats(hours: int = Query(24, ge=1, le=720)):
+    """1.0.22: ogni pagina aperta le chiede ogni 5 s e ogni volta si rileggevano tutti gli eventi del periodo
+    (124 ms con 15.000 eventi al giorno): il risultato vale per STATS_SECONDS, per tutte le pagine insieme."""
+    hit = _stats_cache.get(hours)
+    if hit and time.monotonic() - hit[0] < STATS_SECONDS:
+        return hit[1]
+    out = await _stats(hours)
+    _stats_cache[hours] = (time.monotonic(), out)
+    return out
+
+
+async def _stats(hours: int):
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     docs = await db.events.find({"timestamp": {"$gte": since.isoformat()}},
                                 {"_id": 0, "timestamp": 1, "type": 1, "direction": 1, "category": 1, "class_name": 1, "alert": 1}).to_list(200000)
@@ -599,13 +635,24 @@ async def clip_video(clip_id: str, request: Request, download: bool = False):
     doc = await db.clips.find_one({"id": clip_id, "status": "ready"}, {"_id": 0, "data": 1, "file": 1, "timestamp": 1})
     if not doc or not (doc.get("data") or doc.get("file")):
         raise HTTPException(404, "Clip non disponibile")
-    if doc.get("file"):
+    path = Path(doc["file"]) if doc.get("file") else None
+    if path is not None:
         try:
-            data = await asyncio.to_thread(Path(doc["file"]).read_bytes)
+            size = (await asyncio.to_thread(path.stat)).st_size
         except OSError:
             raise HTTPException(404, "Il file del video non c'è più (cartella spostata, scollegata o file cancellato)")
     else:
         data = bytes(doc["data"])
+        size = len(data)
+
+    async def piece(first: int, last: int) -> bytes:
+        """1.0.22: dal file si legge solo il pezzo chiesto (prima tutto il video a ogni richiesta del telefono)."""
+        if path is None:
+            return data[first:last + 1]
+        try:
+            return await asyncio.to_thread(_read_piece, path, first, last)
+        except OSError:
+            raise HTTPException(404, "Il file del video non c'è più (cartella spostata, scollegata o file cancellato)")
     headers = {"Accept-Ranges": "bytes", "Cache-Control": "private, no-store"}
     if download:
         stamp = datetime.fromisoformat(doc["timestamp"]).strftime("%Y%m%d_%H%M%S")
@@ -613,7 +660,6 @@ async def clip_video(clip_id: str, request: Request, download: bool = False):
     # Safari e i telefoni chiedono il video a pezzi (Range): senza risposta 206 non lo riproducono.
     m = re.fullmatch(r"bytes=(\d*)-(\d*)", request.headers.get("range", ""))
     if m and (m.group(1) or m.group(2)):
-        size = len(data)
         if m.group(1):
             first, last = int(m.group(1)), int(m.group(2) or size - 1)
         else:
@@ -622,8 +668,14 @@ async def clip_video(clip_id: str, request: Request, download: bool = False):
         if first > last:
             return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
         headers["Content-Range"] = f"bytes {first}-{last}/{size}"
-        return Response(data[first:last + 1], status_code=206, media_type="video/mp4", headers=headers)
-    return Response(data, media_type="video/mp4", headers=headers)
+        return Response(await piece(first, last), status_code=206, media_type="video/mp4", headers=headers)
+    return Response(await piece(0, size - 1), media_type="video/mp4", headers=headers)
+
+
+def _read_piece(path: Path, first: int, last: int) -> bytes:
+    with open(path, "rb") as f:
+        f.seek(first)
+        return f.read(max(0, last - first + 1))
 
 
 @api.delete("/clips/{clip_id}")
@@ -680,9 +732,11 @@ async def set_clips_folder(body: FolderBody):
         err = await asyncio.to_thread(clips_mod.check_folder, folder)
         if err:
             raise HTTPException(422, f"Cartella dei video: {err}")
-    s = await load_settings()
-    s.clips_folder = folder
-    await db.settings.replace_one({"_id": "global"}, s.model_dump(), upsert=True)
+    # la revisione NON cambia: la cartella non fa parte del Salva generale (che non la tocca mai)
+    async with _settings_lock:
+        s = await load_settings()
+        s.clips_folder = folder
+        await db.settings.replace_one({"_id": "global"}, s.model_dump(), upsert=True)
     manager.reload_settings(s)
     return await storage()
 
@@ -852,10 +906,10 @@ async def telegram_detect_chat():
     if not chat:
         raise HTTPException(400, "Nessun messaggio trovato: apri il bot su Telegram, premi Avvia (o scrivi /start) e riprova.")
     name = chat.get("title") or " ".join(filter(None, [chat.get("first_name"), chat.get("last_name")])) or chat.get("username") or ""
-    s = await load_settings()
-    s.telegram_chat_id, s.telegram_chat_name, s.telegram_enabled = str(chat["id"]), name, True
-    await db.settings.replace_one({"_id": "global"}, s.model_dump(), upsert=True)
-    return {"chat_id": str(chat["id"]), "chat_name": name}
+    def change(s: Settings):
+        s.telegram_chat_id, s.telegram_chat_name, s.telegram_enabled = str(chat["id"]), name, True
+    s = await change_settings(change)       # 1.0.22: prima le telecamere già accese non lo sapevano fino al riavvio
+    return {"chat_id": str(chat["id"]), "chat_name": name, "rev": s.rev}
 
 
 @api.post("/telegram/test")
@@ -901,7 +955,8 @@ async def stream_ws(ws: WebSocket):
             if msg.get("bytes") is not None:
                 if session is None:
                     continue
-                frame = cv2.imdecode(np.frombuffer(msg["bytes"], np.uint8), cv2.IMREAD_COLOR)
+                # 1.0.22: in un thread, così il fotogramma di una finestra non ferma le altre telecamere
+                frame = await asyncio.to_thread(cv2.imdecode, np.frombuffer(msg["bytes"], np.uint8), cv2.IMREAD_COLOR)
                 if frame is None:
                     await ws.send_json({"type": "detections", "tracks": [], "events": [], "counts": session.counts, "fps": 0, "zones_active": []})
                     continue
@@ -930,15 +985,23 @@ async def stream_ws(ws: WebSocket):
                     worker.detach(queue)
                 if pump:
                     pump.cancel()
+                worker = queue = pump = None
                 if camera.type in ("rtsp", "nvr"):
                     # 06/11/2026 (agente di prova, 2° giro): lo "start" di una finestra NON accende più il
                     # monitoraggio (una finestra rimasta indietro riaccendeva una telecamera appena fermata).
                     # Si accende solo con Avvia (PUT monitor:true); qui, se è spenta, si risponde "stopped".
-                    if not camera.monitor:
+                    # 1.0.22: la telecamera si rilegge DENTRO il lucchetto (un Ferma arrivato mentre si chiudeva la
+                    # sessione di prima non deve essere annullato da questo start)
+                    async with cam_lock(camera.id):
+                        try:
+                            camera = await get_camera(cid)
+                        except HTTPException:
+                            camera = None
+                        worker = manager.ensure(camera, await load_settings()) if camera and camera.monitor else None
+                    if worker is None:
+                        queue = pump = None
                         await ws.send_json({"type": "stopped"})
                         continue
-                    async with cam_lock(camera.id):
-                        worker = manager.ensure(camera, await load_settings())
                     queue = worker.attach()
                     st = worker.status
                     await ws.send_json({"type": "ready"} if st["state"] == "live" else {"type": "error", "message": st["message"]})
@@ -1040,6 +1103,19 @@ if _cors:
 DEMO_CAMERA = {"name": "Demo strada", "type": "demo"}
 
 
+async def close_orphan_clips() -> int:
+    """1.0.22: una clip rimasta "in registrazione" da un avvio precedente (programma chiuso di colpo, crash, corrente)
+    non finirà mai: nell'archivio restava "REC…" per sempre e la pagina la ricontrollava ogni 2 secondi. All'avvio
+    nessuna telecamera sta ancora registrando: quelle righe si segnano come non riuscite e si staccano dagli eventi."""
+    ids = [d["id"] for d in await db.clips.find({"status": "recording"}, {"_id": 0, "id": 1}).to_list(100000)]
+    for cid in ids:
+        await db.clips.update_one({"id": cid}, {"$set": {"status": "failed"}})
+        await db.events.update_many({"clip_id": cid}, {"$set": {"clip_id": None}})
+    if ids:
+        logger.warning("clip: %d rimaste a metà da un avvio precedente, segnate come non riuscite", len(ids))
+    return len(ids)
+
+
 @app.on_event("startup")
 async def startup():
     load_telegram_token()
@@ -1050,6 +1126,10 @@ async def startup():
     app.state.index_task = asyncio.create_task(ensure_indexes())
     if not await db.cameras.count_documents({}):
         await db.cameras.insert_one(Camera(**DEMO_CAMERA).model_dump())
+    try:
+        await close_orphan_clips()
+    except Exception:  # noqa: BLE001 - il server parte comunque
+        logger.exception("clip rimaste a metà non sistemate")
     app.state.cleanup_task = asyncio.create_task(cleanup_loop())
     try:
         await load_temperatura()
@@ -1069,6 +1149,9 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     await manager.shutdown()
+    # 1.0.22: le clip appena chiuse fanno in tempo a partire per Telegram (al massimo 15 s)
+    if clips_mod._SENDING:
+        await asyncio.wait(list(clips_mod._SENDING), timeout=15)
     for t in (app.state.index_task, app.state.cleanup_task, app.state.risorse_task):
         t.cancel()
         with suppress(asyncio.CancelledError):

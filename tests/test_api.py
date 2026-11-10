@@ -165,3 +165,46 @@ def test_diretta_rifiutata_senza_accesso(api):
         with api.websocket_connect("/api/ws/stream"):
             pass
     assert e.value.code == 4401
+
+
+# ------------------------------------------------------------------ 1.0.22
+
+def test_impostazioni_pagina_vecchia_non_riscrive(api):
+    s = api.get("/api/settings").json()
+    assert s["rev"] == 0
+    a = api.put("/api/settings", json={**s, "conf": 0.6}).json()             # il PC cambia la soglia
+    assert a["rev"] == 1
+    r = api.put("/api/settings", json={**s, "sound": False})                  # il telefono, rimasto alla revisione 0
+    assert r.status_code == 409
+    assert api.get("/api/settings").json()["conf"] == 0.6
+    senza = {k: v for k, v in s.items() if k != "rev"}                        # client vecchio: nessun controllo
+    assert api.put("/api/settings", json={**senza, "conf": 0.7}).json()["rev"] == 2
+
+
+def test_orario_scritto_male_nelle_regole(api):
+    s = api.get("/api/settings").json()
+    r = api.put("/api/settings", json={**s, "alert_rules": [{"name": "x", "start": "25:99", "end": ""}]}).json()
+    assert (r["alert_rules"][0]["start"], r["alert_rules"][0]["end"]) == ("00:00", "23:59")
+
+
+def test_clip_rimaste_a_meta_sistemate_all_avvio(api, db):
+    import server
+    ora = datetime.now(timezone.utc).isoformat()
+    esegui(db.clips.insert_one({"id": "orfana", "status": "recording", "camera_id": "c1", "camera_name": "G", "event_ids": ["e1"], "timestamp": ora}))
+    esegui(db.clips.insert_one({"id": "buona", "status": "ready", "camera_id": "c1", "camera_name": "G", "event_ids": [], "timestamp": ora, "data": b"x"}))
+    _evento(db, id="e1", clip_id="orfana")
+    assert esegui(server.close_orphan_clips()) == 1
+    assert [c["id"] for c in api.get("/api/clips").json()] == ["buona"]
+    assert api.get("/api/clips/orfana/meta").json()["status"] == "failed"
+    assert api.get("/api/events").json()[0]["clip_id"] is None
+    assert esegui(server.close_orphan_clips()) == 0
+
+
+def test_statistiche_tenute_pochi_secondi(api, db, monkeypatch):
+    import server
+    _evento(db, id="e1")
+    assert api.get("/api/stats").json()["totals"]["total"] == 1
+    _evento(db, id="e2")
+    assert api.get("/api/stats").json()["totals"]["total"] == 1               # stessa risposta entro 4 s
+    monkeypatch.setattr(server, "STATS_SECONDS", 0)
+    assert api.get("/api/stats").json()["totals"]["total"] == 2

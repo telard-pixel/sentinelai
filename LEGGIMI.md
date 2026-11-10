@@ -196,3 +196,13 @@ OpenVINO sulla **scheda video Intel HD 630** 68 ms e 0,07 s, con punteggi identi
 - Il modello compilato per la scheda va in `/var/lib/SentinelAI/cache-openvino` (avvio in 1 s invece di 8).
 - Decodificare i video con la scheda NON conviene: provato l'8/11, la Sala 1080p costa ~16% di un core col
   processore e ~20% con la scheda (riportare le immagini indietro costa quanto decodificarle).
+
+## Prove automatiche
+
+Le prove del server stanno in `tests/` (linea, zone, clip, accesso, API, diretta) e girano a ogni build della CI.
+In locale:
+
+    python3 -m venv .venv-prove && .venv-prove/bin/pip install -r tests/requirements-prove.txt
+    .venv-prove/bin/python -m pytest tests -q
+
+Usano un database SQLite temporaneo e un riconoscitore finto: non servono né il modello né le telecamere.

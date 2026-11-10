@@ -10,7 +10,9 @@ import asyncio
 import copy
 import json
 import os
+import io
 import pickle
+import struct
 import re
 import sqlite3
 import threading
@@ -88,13 +90,45 @@ def _split(doc: dict):
     """I bytes non stanno nel JSON: vanno nella colonna binaria (solo campi di primo livello)."""
     plain = {k: v for k, v in doc.items() if not isinstance(v, (bytes, bytearray, memoryview))}
     binary = {k: bytes(v) for k, v in doc.items() if isinstance(v, (bytes, bytearray, memoryview))}
-    return json.dumps(plain, ensure_ascii=False, default=_json_default, allow_nan=False), (pickle.dumps(binary) if binary else None)
+    return json.dumps(plain, ensure_ascii=False, default=_json_default, allow_nan=False), (_pack(binary) if binary else None)
+
+
+# 1.0.22: i campi binari (foto, video) si salvano in un formato semplice, non più con pickle (che, letto da un file
+# manomesso, può eseguire codice): "SB1" + lunghezza dell'indice + indice JSON {nome: lunghezza} + i dati di fila.
+_MAGIC = b"SB1"
+
+
+def _pack(binary: dict) -> bytes:
+    index = json.dumps({k: len(v) for k, v in binary.items()}).encode()
+    return _MAGIC + struct.pack("<I", len(index)) + index + b"".join(binary.values())
+
+
+class _SoloDati(pickle.Unpickler):
+    """Le righe scritte prima della 1.0.22 sono pickle di {nome: bytes}: si leggono senza permettere nessun oggetto."""
+
+    def find_class(self, module, name):
+        raise pickle.UnpicklingError("oggetto non ammesso")
+
+
+def _unpack(blob) -> dict:
+    blob = bytes(blob)
+    if blob[:3] == _MAGIC:
+        n = struct.unpack("<I", blob[3:7])[0]
+        index, pos, out = json.loads(blob[7:7 + n]), 7 + n, {}
+        for k, size in index.items():
+            out[k] = blob[pos:pos + size]
+            pos += size
+        return out
+    old = _SoloDati(io.BytesIO(blob)).load()
+    if not isinstance(old, dict) or not all(isinstance(k, str) and isinstance(v, bytes) for k, v in old.items()):
+        raise ValueError("campo binario non valido")
+    return old
 
 
 def _join(doc_json: str, blob) -> dict:
     doc = json.loads(doc_json)
     if blob:
-        doc.update(pickle.loads(blob))
+        doc.update(_unpack(blob))
     return doc
 
 

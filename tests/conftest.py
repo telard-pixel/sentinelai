@@ -81,6 +81,7 @@ def db():
     import server
     for nome in ("events", "snapshots", "clips", "cameras", "heatmaps", "backgrounds", "settings", "meta"):
         esegui(server.db[nome].delete_many({}))
+    server._stats_cache.clear()
     return server.db
 
 
