@@ -192,7 +192,10 @@ def make_app(data_dir: Path, password: str, rete: bool = False):
 def start_server(app, host: str, port: int):
     import uvicorn
     cfg = uvicorn.Config(app, host=host, port=port, log_config=None, log_level="warning", ws_max_size=4 * 1024 * 1024,
-                         ws_per_message_deflate=False)   # 1.0.12: JPEG in base64 non si comprime, costava CPU
+                         ws_per_message_deflate=False,   # 1.0.12: JPEG in base64 non si comprime, costava CPU
+                         # 1.0.22 (agente di prova): senza limite una richiesta lenta in corso (es. prova Telegram con
+                         # internet giù, 60 s) rimandava l'arresto vero e le clip in corso non si salvavano
+                         timeout_graceful_shutdown=5)
     srv = uvicorn.Server(cfg)
     t = threading.Thread(target=srv.run, daemon=True, name="server")
     t.start()

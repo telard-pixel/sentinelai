@@ -122,7 +122,9 @@ def main():
     import uvicorn
     uvicorn.run(app, host=host, port=a.porta, log_level="warning", ws_max_size=4 * 1024 * 1024,
                 # 1.0.12: niente compressione dei messaggi della diretta (JPEG in base64: non si comprime, costava CPU)
-                ws_per_message_deflate=False)
+                ws_per_message_deflate=False,
+                # 1.0.22: una richiesta lenta in corso non rimanda l'arresto (clip in corso salvate entro lo stop di systemd)
+                timeout_graceful_shutdown=5)
 
 
 if __name__ == "__main__":

@@ -956,7 +956,10 @@ async def stream_ws(ws: WebSocket):
                 if session is None:
                     continue
                 # 1.0.22: in un thread, così il fotogramma di una finestra non ferma le altre telecamere
-                frame = await asyncio.to_thread(cv2.imdecode, np.frombuffer(msg["bytes"], np.uint8), cv2.IMREAD_COLOR)
+                try:
+                    frame = await asyncio.to_thread(cv2.imdecode, np.frombuffer(msg["bytes"], np.uint8), cv2.IMREAD_COLOR)
+                except cv2.error:       # messaggio vuoto: come un'immagine non valida, la connessione resta su
+                    frame = None
                 if frame is None:
                     await ws.send_json({"type": "detections", "tracks": [], "events": [], "counts": session.counts, "fps": 0, "zones_active": []})
                     continue
@@ -1149,9 +1152,9 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     await manager.shutdown()
-    # 1.0.22: le clip appena chiuse fanno in tempo a partire per Telegram (al massimo 15 s)
+    # 1.0.22: le clip appena chiuse fanno in tempo a partire per Telegram (al massimo 8 s)
     if clips_mod._SENDING:
-        await asyncio.wait(list(clips_mod._SENDING), timeout=15)
+        await asyncio.wait(list(clips_mod._SENDING), timeout=8)
     for t in (app.state.index_task, app.state.cleanup_task, app.state.risorse_task):
         t.cancel()
         with suppress(asyncio.CancelledError):

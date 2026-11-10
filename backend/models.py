@@ -225,14 +225,18 @@ class AlertRule(BaseModel):
     start: str = "00:00"
     end: str = "23:59"
 
-    @model_validator(mode="after")
-    def check_times(self):
-        # 1.0.22: un orario scritto male non manda in errore il caricamento delle impostazioni: torna al predefinito
-        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", self.start or ""):
-            self.start = "00:00"
-        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", self.end or ""):
-            self.end = "23:59"
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def check_times(cls, data):
+        # 1.0.22: un orario scritto male (o mancante, o non testo) non manda in errore il caricamento delle
+        # impostazioni: torna al predefinito
+        if isinstance(data, dict):
+            data = dict(data)
+            for campo, predefinito in (("start", "00:00"), ("end", "23:59")):
+                v = data.get(campo, predefinito)
+                if not (isinstance(v, str) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v)):
+                    data[campo] = predefinito
+        return data
 
 
 class Settings(BaseModel):

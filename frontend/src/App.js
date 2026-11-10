@@ -79,7 +79,7 @@ function Dashboard() {
         {tab === "registro" && <EventLog onOpen={setOpenEvent} />}
         {tab === "analisi" && <Analytics />}
         {tab === "clip" && <ClipArchive onOpenEvent={setOpenEvent} />}
-        {tab === "allarmi" && <AlertRules settings={settings} onSave={save.mutate} />}
+        {tab === "allarmi" && <AlertRules settings={settings} onSave={save.mutate} saving={save.isPending} />}
       </main>
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} settings={settings} onSave={save.mutate} />
       <SnapshotDialog event={openEvent} onClose={() => setOpenEvent(null)} />

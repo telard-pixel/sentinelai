@@ -51,7 +51,7 @@ function RuleRow({ rule, i, onChange, onDelete }) {
   );
 }
 
-export default function AlertRules({ settings, onSave }) {
+export default function AlertRules({ settings, onSave, saving = false }) {
   const [draft, setDraft] = useState(settings);
   const [perm, setPerm] = useState(typeof Notification !== "undefined" ? Notification.permission : "unsupported");
   // 1.0.9: su http (es. http://192.168.1.50:8765) il browser non permette le notifiche: prima il tasto
@@ -73,7 +73,7 @@ export default function AlertRules({ settings, onSave }) {
       <div className="flex items-center gap-3">
         <h2 className="mr-auto font-heading text-2xl font-semibold text-gray-100">Allarmi e notifiche</h2>
         <Button data-testid="alert-test-button" variant="outline" onClick={test} className="gap-2 border-amber-500/40 bg-transparent font-mono text-xs text-amber-300"><BellRing className="h-4 w-4" /> Prova allarme</Button>
-        <Button data-testid="alerts-save-button" onClick={() => onSave(draft)} className="gap-2 bg-emerald-500 font-mono text-xs text-[#04130D] hover:bg-emerald-400"><Save className="h-4 w-4" /> Salva regole</Button>
+        <Button data-testid="alerts-save-button" disabled={saving} onClick={() => onSave(draft)} className="gap-2 bg-emerald-500 font-mono text-xs text-[#04130D] hover:bg-emerald-400"><Save className="h-4 w-4" /> Salva regole</Button>
       </div>
       <div className="panel grid gap-4 p-4 md:grid-cols-3">
         <label className="flex items-center gap-3 text-sm text-gray-300"><Volume2 className="h-4 w-4 text-amber-400" /> Sirena sonora
