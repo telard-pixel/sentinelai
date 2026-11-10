@@ -228,9 +228,12 @@ jobs:
           npm run build
       - name: Prova l'aggiornamento Linux (firma, ritorno indietro)
         run: sh linux/prova-aggiorna.sh
+      # stesso Python del CT (3.11): con quello del runner le librerie fissate non hanno pacchetti pronti
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: { python-version: "3.11" }
       - name: Prove automatiche del server (linea, zone, clip, accesso, API)
         run: |
-          python3 -m venv /tmp/prove
+          python -m venv /tmp/prove
           /tmp/prove/bin/pip install -q -r tests/requirements-prove.txt
           /tmp/prove/bin/python -m pytest tests -q
       - name: Pacchetto
