@@ -221,3 +221,40 @@ def test_interruttore_allarme_attivo(api):
     r = api.put(f"/api/cameras/{c['id']}", json={**CAM, "url": c["url"], "rev": 1, "alarm_enabled": False, "alarm_categories": ["persona"]}).json()
     assert r["alarm_enabled"] is False and r["alarm_categories"] == ["persona"]
     assert api.post("/api/cameras/inesistente/alarm", json={"on": True}).status_code == 404
+
+
+def test_salvare_senza_i_campi_degli_allarmi_non_li_riaccende(api):
+    c = api.post("/api/cameras", json={**CAM, "alarm_enabled": False, "alarm_categories": ["persona"]}).json()
+    r = api.put(f"/api/cameras/{c['id']}", json={**CAM, "url": c["url"], "name": "Rinominata"}).json()   # client vecchio
+    assert r["name"] == "Rinominata" and r["alarm_enabled"] is False and r["alarm_categories"] == ["persona"]
+    assert api.put(f"/api/cameras/{c['id']}", json={**CAM, "url": c["url"], "alarm_categories": ["Animale"]}).status_code == 422
+
+
+def test_interruttore_allarme_avvisa_la_telecamera_accesa_e_non_tocca_altro(api, monkeypatch):
+    import server
+    c = api.post("/api/cameras", json={**CAM, "monitor": False}).json()
+    viste = []
+    monkeypatch.setattr(server.manager, "reload_camera", lambda cam, s: viste.append(cam.alarm_enabled))
+    prima = esegui(server.db.cameras.find_one({"id": c["id"]}, {"_id": 0}))
+    api.post(f"/api/cameras/{c['id']}/alarm", json={"on": False})
+    dopo = esegui(server.db.cameras.find_one({"id": c["id"]}, {"_id": 0}))
+    assert viste == [False]
+    assert {k: v for k, v in dopo.items() if k not in ("alarm_enabled", "rev")} == {k: v for k, v in prima.items() if k not in ("alarm_enabled", "rev")}
+
+
+def test_interruttore_allarme_vale_anche_per_la_diretta_del_browser(api, finto):
+    cam = api.post("/api/cameras", json={"name": "Demo", "type": "demo", "line": {"enabled": False},
+                                         "zones": [{"name": "Z", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}]}).json()
+    jpg = cv2.imencode(".jpg", np.zeros((360, 640, 3), dtype=np.uint8))[1].tobytes()
+    with api.websocket_connect("/api/ws/stream") as ws:
+        ws.send_text(json.dumps({"type": "start", "camera_id": cam["id"]}))
+        assert ws.receive_json()["type"] == "ready"
+        api.post(f"/api/cameras/{cam['id']}/alarm", json={"on": False})       # da un'altra finestra
+        finto.prossimi = [(0, 0.9, riquadro(0.5, 0.5))]
+        eventi = []
+        for _ in range(5):
+            ws.send_bytes(jpg)
+            eventi += ws.receive_json()["events"]
+    import server
+    assert [(e["type"], e["alert"]) for e in eventi] == [("zona_ingresso", False)]
+    assert not server._browser_sessions.get(cam["id"])

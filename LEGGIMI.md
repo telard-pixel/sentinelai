@@ -206,3 +206,9 @@ In locale:
     .venv-prove/bin/python -m pytest tests -q
 
 Usano un database SQLite temporaneo e un riconoscitore finto: non servono né il modello né le telecamere.
+
+## Allarmi per telecamera (1.0.23)
+
+Ogni telecamera ha la voce **Allarme attivo** (campanella sulla scheda, o in Configura): spenta, la telecamera guarda e
+registra gli eventi ma non dà allarmi, Telegram né clip. In Configura, "Allarmi per" sceglie le categorie che possono
+dare l'allarme su quella telecamera (es. Sala senza Animali). Da uno script: `POST /api/cameras/{id}/alarm {"on": true|false}`.

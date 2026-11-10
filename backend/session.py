@@ -16,7 +16,7 @@ import cv2
 import telegram_bot
 from clips import ClipRecorder
 from detection import SURE_HITS, COCO_IT, Tracker, same_spot, annotated_snapshot, category_of, detector, encode_jpeg, heading_of, within_segment
-from models import HEAT_H, HEAT_W, Camera, Event, Settings, Zone, alarm_allowed
+from models import HEAT_H, HEAT_W, Camera, Event, Settings, Zone, alarm_allowed, alarms_on
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +124,14 @@ class StreamSession:
         self.fixed_spots: list[dict] = []     # {"cls", "box", "seen"}: cose ferme scambiate per oggetti
 
     def update(self, camera: Camera, settings: Settings):
+        # 1.0.23 (agente di prova): riaccendendo l'allarme, o rimettendo una categoria, chi è GIÀ dentro una zona deve
+        # essere segnalato adesso (prima l'ingresso era stato "consumato" in silenzio e non scattava più niente finché
+        # non usciva e rientrava: chi era in Sala al momento di accendere restava invisibile).
+        old = self.camera
+        if alarms_on(camera) and (not alarms_on(old) or set(old.alarm_categories) != set(camera.alarm_categories)):
+            for zones in self.zone_state.values():
+                for st in zones.values():
+                    st["entered"] = st["dwell"] = False
         self.camera, self.settings = camera, settings
         self.recorder.camera, self.recorder.settings = camera, settings
 

@@ -199,7 +199,42 @@ def test_sala_senza_animali(db, finto, orologio):
 
 
 def test_categorie_degli_allarmi_normalizzate():
-    assert Camera(name="a", type="demo", alarm_categories=["animale", "boh", "persona"]).alarm_categories == ["persona", "animale"]
+    assert Camera(name="a", type="demo", alarm_categories=["animale", "persona"]).alarm_categories == ["persona", "animale"]
+    for brutte in (["boh"], ["Animale"], ["persona", "PERSONA"]):
+        try:
+            Camera(name="a", type="demo", alarm_categories=brutte)
+            raise AssertionError("accettata")
+        except ValueError:
+            pass
     assert Camera(name="a", type="demo", alarm_categories=["persona", "veicolo", "animale", "oggetto"]).alarm_categories == []
     vecchia = Camera(**{"name": "salvata prima", "type": "demo"})
     assert vecchia.alarm_enabled is True and vecchia.alarm_categories == []
+
+
+def test_chi_e_gia_in_zona_viene_segnalato_alla_riaccensione(db, finto, orologio):
+    zona = Zone(name="Stanza", points=[[0, 0], [1, 0], [1, 1], [0, 1]], dwell_seconds=2)
+
+    async def f():
+        s = sessione(db, zones=[zona], line=Line(enabled=False), alarm_enabled=False)
+        spento = await gira(s, finto, orologio, [(0.5, 0.5)] * 20)                  # entra e sosta, in silenzio
+        s.update(s.camera.model_copy(update={"alarm_enabled": True}), s.settings)
+        acceso = await gira(s, finto, orologio, [(0.5, 0.5)] * 5)
+        dopo = await gira(s, finto, orologio, [(0.5, 0.5)] * 20)
+        await s.close()
+        return spento, acceso, dopo
+    spento, acceso, dopo = esegui(f())
+    assert [(e["type"], e["alert"]) for e in spento] == [("zona_ingresso", False), ("zona_sosta", False)]
+    assert sorted((e["type"], e["alert"]) for e in acceso) == [("zona_ingresso", True), ("zona_sosta", True)]
+    assert dopo == []                                                                # una volta sola
+
+
+def test_categoria_rimessa_segnala_chi_e_gia_dentro(db, finto, orologio):
+    async def f():
+        s = sessione(db, zones=[ZONA_TUTTA], line=Line(enabled=False), alarm_categories=["persona"])
+        prima = await gira(s, finto, orologio, [(0.5, 0.5)] * 6, cls=15)
+        s.update(s.camera.model_copy(update={"alarm_categories": []}), s.settings)
+        poi = await gira(s, finto, orologio, [(0.5, 0.5)] * 3, cls=15)
+        await s.close()
+        return prima, poi
+    prima, poi = esegui(f())
+    assert [e["alert"] for e in prima] == [False] and [e["alert"] for e in poi] == [True]

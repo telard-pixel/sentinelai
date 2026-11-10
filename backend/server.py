@@ -81,6 +81,14 @@ async def ensure_indexes() -> None:
 app = FastAPI(title="SentinelAI Vision Guard")
 manager = Manager(db)
 _cam_locks: dict = {}
+#: 1.0.23: sessioni aperte dal browser (webcam, file, demo) per telecamera: una modifica fatta da un'altra finestra
+#: (es. "Allarme attivo" spento dal telefono) deve valere anche per loro, non solo per le telecamere di rete.
+_browser_sessions: dict = {}
+
+
+def tell_browser_sessions(cam, settings) -> None:
+    for s in list(_browser_sessions.get(cam.id, ())):
+        s.update(cam, settings)
 
 
 def cam_lock(camera_id: str) -> asyncio.Lock:
@@ -384,6 +392,11 @@ async def update_camera(camera_id: str, body: CameraIn):
             and data["nvr_username"] == old.nvr_username and data["nvr_port"] == old.nvr_port:
         data["nvr_password"] = old.nvr_password   # campo vuoto = password invariata (solo stesso NVR e utente)
     data["url"] = restore_url_password(data["url"], old.url)
+    # 1.0.23 (agente di prova): chi salva senza mandare i campi degli allarmi (script, client vecchio) non li
+    # rimette ai valori di base: un allarme spento restava riacceso senza dirlo.
+    for campo in ("alarm_enabled", "alarm_categories"):
+        if campo not in body.model_fields_set:
+            data[campo] = getattr(old, campo)
     data["rev"] = (old.rev or 0) + 1
     cam = Camera(**data, id=old.id, created_at=old.created_at)
     if not rtsp_url_allowed(cam):
@@ -402,6 +415,7 @@ async def update_camera(camera_id: str, body: CameraIn):
                 manager.ensure(cam, await load_settings())
         else:
             await manager.stop(cam.id)
+        tell_browser_sessions(cam, await load_settings())
     return camera_public(cam)
 
 
@@ -982,6 +996,7 @@ async def stream_ws(ws: WebSocket):
                     await ws.send_json({"type": "error", "message": "Telecamera non trovata"})
                     continue
                 if session:
+                    _browser_sessions.get(session.camera.id, set()).discard(session)
                     await asyncio.shield(session.close())
                     session = None
                 if worker and queue:
@@ -1015,6 +1030,7 @@ async def stream_ws(ws: WebSocket):
                     except (TypeError, ValueError):
                         tzo = 0
                     session = StreamSession(db, camera, await load_settings(), tzo)
+                    _browser_sessions.setdefault(camera.id, set()).add(session)
                     await ws.send_json({"type": "ready"})
             elif kind == "reload":
                 with suppress(HTTPException):
@@ -1042,6 +1058,7 @@ async def stream_ws(ws: WebSocket):
         if pump:
             pump.cancel()
         if session:
+            _browser_sessions.get(session.camera.id, set()).discard(session)
             # shield: anche se la connessione si chiude di colpo, la clip in corso viene salvata.
             with suppress(asyncio.CancelledError):
                 await asyncio.shield(session.close())
@@ -1081,7 +1098,9 @@ async def camera_alarm(camera_id: str, body: AlarmIn):
         cam = await get_camera(camera_id)
         cam.alarm_enabled, cam.rev = body.on, (cam.rev or 0) + 1
         await db.cameras.update_one({"id": camera_id}, {"$set": {"alarm_enabled": body.on, "rev": cam.rev}})
-        manager.reload_camera(cam, await load_settings())
+        settings = await load_settings()
+        manager.reload_camera(cam, settings)
+        tell_browser_sessions(cam, settings)
     logger.info("[%s] allarme %s", cam.name, "attivo" if body.on else "spento (solo visione)")
     return camera_public(cam)
 

@@ -89,9 +89,14 @@ class CameraIn(BaseModel):
             raise ValueError("Indirizzo NVR non valido")
         if self.type == "rtsp" and not self.url.strip():
             raise ValueError("URL del flusso obbligatorio")
-        # categorie sconosciute via; tutte e quattro = nessun limite
+        # tutte e quattro = nessun limite. Una categoria sconosciuta è un errore (agente di prova 1.0.23: togliendola
+        # in silenzio ["Animale"] diventava "tutte", il contrario di quello che si voleva)
+        if any(c not in CATEGORIES for c in self.alarm_categories):
+            raise ValueError("Categoria degli allarmi non valida (persona, veicolo, animale, oggetto)")
         cats = [c for c in CATEGORIES if c in self.alarm_categories]
-        self.alarm_categories = [] if len(cats) == len(CATEGORIES) else cats
+        cats = [] if len(cats) == len(CATEGORIES) else cats
+        if cats != self.alarm_categories:      # assegnare sempre lo segnerebbe come "mandato dal client"
+            self.alarm_categories = cats
         return self
 
 
