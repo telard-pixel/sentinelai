@@ -9,3 +9,5 @@ build-exe/
 desktop/sentinel.ico
 desktop/version.txt
 desktop/VERSIONE
+.venv-prove/
+.pytest_cache/

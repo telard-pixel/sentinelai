@@ -228,6 +228,11 @@ jobs:
           npm run build
       - name: Prova l'aggiornamento Linux (firma, ritorno indietro)
         run: sh linux/prova-aggiorna.sh
+      - name: Prove automatiche del server (linea, zone, clip, accesso, API)
+        run: |
+          python3 -m venv /tmp/prove
+          /tmp/prove/bin/pip install -q -r tests/requirements-prove.txt
+          /tmp/prove/bin/python -m pytest tests -q
       - name: Pacchetto
         run: |
           V=${{ steps.v.outputs.v }}

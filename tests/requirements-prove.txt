@@ -1,0 +1,16 @@
+# Librerie per le prove automatiche (python -m pytest tests): quelle del server Linux senza OpenVINO, più pytest.
+fastapi==0.129.2
+starlette==0.52.1
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+python-dotenv==1.0.1
+httpx==0.28.1
+numpy==1.26.4
+openpyxl==3.1.5
+pymongo==4.9.2
+opencv-python-headless==4.10.0.84
+imageio-ffmpeg==0.5.1
+websockets==14.1
+cryptography==44.0.0
+tzdata==2024.2
+pytest==8.3.4
