@@ -63,7 +63,7 @@ export default function CameraTile({ camera, onEvents, onResult, onCameraChange,
             style={{ marginLeft: -4 }} className="camera-drag-handle rounded p-0.5 text-gray-500 hover:bg-white/5 hover:text-gray-200"><GripVertical className="h-4 w-4" /></button>
         )}
         <Icon className="h-3.5 w-3.5 text-emerald-400" />
-        <span className="truncate font-heading text-sm font-semibold text-gray-100" data-testid={`camera-name-${camera.id}`}>{camera.name}</span>
+        <span className="truncate font-heading text-sm font-semibold text-gray-100" title={camera.name} data-testid={`camera-name-${camera.id}`}>{camera.name}</span>
         {camera.prova && <span className="rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider" style={{ background: "rgba(14,165,233,0.15)", color: "#7DD3FC" }} data-testid={`camera-prova-${camera.id}`}>prova</span>}
         {/* a 3 colonne il tipo lo dice già l'icona: lo spazio serve al nome (agente di prova 1.0.23) */}
         {!tight && <span className="rounded border border-white/10 px-1.5 py-0.5 font-mono text-[9px] uppercase text-gray-500">{SOURCE_META[camera.type].label}</span>}

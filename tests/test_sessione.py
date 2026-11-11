@@ -238,3 +238,20 @@ def test_categoria_rimessa_segnala_chi_e_gia_dentro(db, finto, orologio):
         return prima, poi
     prima, poi = esegui(f())
     assert [e["alert"] for e in prima] == [False] and [e["alert"] for e in poi] == [True]
+
+
+def test_ricaricare_o_restringere_non_segnala_di_nuovo(db, finto, orologio):
+    zona = Zone(name="Stanza", points=[[0, 0], [1, 0], [1, 1], [0, 1]], dwell_seconds=2)
+
+    async def f():
+        s = sessione(db, zones=[zona], line=Line(enabled=False))
+        prima = await gira(s, finto, orologio, [(0.5, 0.5)] * 20)
+        dopo = []
+        for cambio in ({}, {"name": "Altro nome"}, {"alarm_categories": ["persona", "veicolo"]}, {"alarm_categories": []},
+                       {"alarm_enabled": False}):
+            s.update(s.camera.model_copy(update=cambio), s.settings)
+            dopo += await gira(s, finto, orologio, [(0.5, 0.5)] * 5)
+        await s.close()
+        return prima, dopo
+    prima, dopo = esegui(f())
+    assert len(prima) == 2 and all(e["alert"] for e in prima) and dopo == []

@@ -127,11 +127,16 @@ class StreamSession:
         # 1.0.23 (agente di prova): riaccendendo l'allarme, o rimettendo una categoria, chi è GIÀ dentro una zona deve
         # essere segnalato adesso (prima l'ingresso era stato "consumato" in silenzio e non scattava più niente finché
         # non usciva e rientrava: chi era in Sala al momento di accendere restava invisibile).
+        # Solo le tracce la cui categoria passa da "non ammessa" ad "ammessa" (2° giro dell'agente: togliendo Animali
+        # la persona già segnalata veniva segnalata di nuovo).
         old = self.camera
-        if alarms_on(camera) and (not alarms_on(old) or set(old.alarm_categories) != set(camera.alarm_categories)):
-            for zones in self.zone_state.values():
-                for st in zones.values():
-                    st["entered"] = st["dwell"] = False
+        if alarms_on(camera):
+            for tid, zones in self.zone_state.items():
+                tr = self.tracker.tracks.get(tid)
+                cat = category_of(tr.cls) if tr else None
+                if cat and not alarm_allowed(old, cat) and alarm_allowed(camera, cat):
+                    for st in zones.values():
+                        st["entered"] = st["dwell"] = False
         self.camera, self.settings = camera, settings
         self.recorder.camera, self.recorder.settings = camera, settings
 

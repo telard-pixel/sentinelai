@@ -258,3 +258,26 @@ def test_interruttore_allarme_vale_anche_per_la_diretta_del_browser(api, finto):
     import server
     assert [(e["type"], e["alert"]) for e in eventi] == [("zona_ingresso", False)]
     assert not server._browser_sessions.get(cam["id"])
+
+
+def test_modifica_da_un_altra_finestra_vale_per_la_diretta_e_il_registro_si_svuota(api, finto, orologio):
+    import server
+    zona = {"name": "Z", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]}
+    a = api.post("/api/cameras", json={"name": "A", "type": "demo", "line": {"enabled": False}, "zones": [zona], "alarm_enabled": False}).json()
+    b = api.post("/api/cameras", json={"name": "B", "type": "demo"}).json()
+    jpg = cv2.imencode(".jpg", np.zeros((360, 640, 3), dtype=np.uint8))[1].tobytes()
+    with api.websocket_connect("/api/ws/stream") as ws:
+        ws.send_text(json.dumps({"type": "start", "camera_id": a["id"]}))
+        assert ws.receive_json()["type"] == "ready"
+        finto.prossimi = [(0, 0.9, riquadro(0.5, 0.5))]
+        eventi = []
+        for _ in range(4):
+            ws.send_bytes(jpg); eventi += ws.receive_json()["events"]
+        api.put(f"/api/cameras/{a['id']}", json={"name": "A", "type": "demo", "line": {"enabled": False}, "zones": a["zones"], "alarm_enabled": True})
+        for _ in range(3):
+            ws.send_bytes(jpg); eventi += ws.receive_json()["events"]
+        assert [e["alert"] for e in eventi] == [False, True]
+        ws.send_text(json.dumps({"type": "start", "camera_id": b["id"]}))        # stessa connessione, altra telecamera
+        assert ws.receive_json()["type"] == "ready"
+        assert not server._browser_sessions.get(a["id"]) and len(server._browser_sessions[b["id"]]) == 1
+    assert not server._browser_sessions.get(b["id"])
