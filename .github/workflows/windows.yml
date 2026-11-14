@@ -36,28 +36,22 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with: { python-version: "3.11" }
 
-      # ---------------------------------------------------------------- modello YOLO11s -> ONNX 640x448 (una volta, poi in cache)
+      # ---------------------------------------------------------------- modello YOLO11s giro 5 -> ONNX 448x640 (scaricato con controllo impronta, poi in cache)
+      # 1.0.24: non si esporta più il .pt di fabbrica, ma si usa il modello del giro 5 (allenato su gatti Sala + webcam,
+      # provato in produzione sul CT 111 dal 10/11 al 14/11). Scaricato da un indirizzo fisso e verificato con l'impronta
+      # prima di usarlo, come il .pt in 1.0.9. Niente più torch/ultralytics in CI: l'ONNX è già pronto.
       - name: Cache modello
         id: modello
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with: { path: models/yolo11s.onnx, key: yolo11s-448x640-onnx-ultralytics-8.3.55-opset12-pt85a76fe8 }
-      - name: Esporta YOLO11s in ONNX
+        with: { path: models/yolo11s.onnx, key: yolo11s-g5-448x640-onnx-adf6cb27 }
+      - name: Scarica modello giro 5 (ONNX)
         if: steps.modello.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          python -m venv C:\esporta
-          # torch e torchvision insieme e fissati: altrimenti pip prende un torch nuovo il cui esportatore vuole onnxscript.
-          C:\esporta\Scripts\python -m pip install -q torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
-          C:\esporta\Scripts\python -m pip install -q ultralytics==8.3.55 onnx==1.17.0 torch==2.5.1 torchvision==0.20.1 --extra-index-url https://download.pytorch.org/whl/cpu
-          C:\esporta\Scripts\python -c "import torch; print('torch', torch.__version__)"
-          # 1.0.9 (revisione): il .pt si scarica da un indirizzo fisso e si controlla l'impronta prima di aprirlo
-          # (torch.load di un file alterato può eseguire codice).
-          Invoke-WebRequest -Uri https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt -OutFile yolo11s.pt -MaximumRetryCount 6 -RetryIntervalSec 30
-          $h = (Get-FileHash yolo11s.pt -Algorithm SHA256).Hash.ToLower()
-          if ($h -ne '85a76fe86dd8afe384648546b56a7a78580c7cb7b404fc595f97969322d502d5') { Write-Error "yolo11s.pt con impronta sbagliata: $h"; exit 1 }
-          C:\esporta\Scripts\python -c "from ultralytics import YOLO; YOLO('yolo11s.pt').export(format='onnx', imgsz=(448, 640), opset=12, simplify=False, dynamic=False)"
           New-Item -ItemType Directory -Force models | Out-Null
-          Move-Item yolo11s.onnx models\yolo11s.onnx -Force
+          Invoke-WebRequest -Uri https://github.com/telard-pixel/sentinelai/releases/download/modello-g5/yolo11s.onnx -OutFile models\yolo11s.onnx -MaximumRetryCount 6 -RetryIntervalSec 30
+          $h = (Get-FileHash models\yolo11s.onnx -Algorithm SHA256).Hash.ToLower()
+          if ($h -ne 'adf6cb279cc3d8da5a368166ea7308a8247e9b438102364dccffa041680a19a2') { Write-Error "modello giro 5 con impronta sbagliata: $h"; exit 1 }
           Get-Item models\yolo11s.onnx | Format-List Name, Length
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
